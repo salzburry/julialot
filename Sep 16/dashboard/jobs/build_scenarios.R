@@ -246,7 +246,7 @@ export_one <- function(prefix, env) {
           "sensitive as the warehouse tables it came from: keep the Dataset ",
           "private to the App and Job, and do not share it as a published ",
           "extract. Cutting it down to the S_*_RELEASE tables does not make ",
-          "one - six tables have a released copy and the rest of what a panel ",
+          "one - seven tables have a released copy and the rest of what a panel ",
           "draws has none, so that extract is incomplete AND still ",
           "unsuppressed. TFLS/run_tfls.R fills the shells from this run at a ",
           "floor that may only rise and writes tables carrying no identifier: ",

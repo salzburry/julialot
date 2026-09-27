@@ -67,7 +67,7 @@ release_recoverable_blocks <- function(recoverable) {
 #
 # The list is believed only where it IS one, and the test is membership, not
 # spelling. Every name has to be one of the tables that HAS a released copy -
-# the six of SUPPRESSION_SPEC - because this field is what narrows a refusal,
+# the tables of SUPPRESSION_SPEC - because this field is what narrows a refusal,
 # and a name matched on shape alone narrows it to nothing: a stale or hand-
 # edited "S_NOT_A_TABLE" is a perfectly well-formed name, and believing it
 # would refuse a table that does not exist while leaving the recoverable one

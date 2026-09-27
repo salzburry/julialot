@@ -14,168 +14,85 @@ it wrote. The order below is the order to run them in.
 | 1 | `ndmm/` | the cohort and its attrition | `NDMM_COHORT`, `NDMM_ATTRITION` |
 | 2 | `lot/` | the lines of therapy | `LOT_LONG_FINAL`, `MAP_STACKED`, … |
 | 3 | `variables/` | every other variable the protocol asks for — demographics, comorbidity, SOC, safety, HCRU, secondary malignancy, time-to-event, treatment patterns | the `S_*` tables |
-| 4 | `TFLS/` | the requested table shells, filled from stage 3 | `TFLS/out/` |
-| 5 | `dashboard/` | the Domino app over a finished run, and the snapshot job that feeds it | — |
-
-Start at `ndmm/README.md`, `lot/CONTENTS.md`, `variables/CONTENTS.md`,
-`TFLS/README.md` and `dashboard/DASHBOARD.md` respectively.
-
-**Stage 1 changes are settings, and two of them are acknowledged deviations.**
-`variables/BUILD_DELTA.md` section 0 lists every cohort setting the protocol
-moves. Each is written once, in `ndmm/config.csv` or the environment, and
-reaches both the contract check and the SQL. Two of them — the study period
-and the 1L index floor — are what the cohort *is*, so the build refuses a
-value that differs from its `CONTRACT` unless `NDMM_CONTRACT_OVERRIDE=TRUE`
-says the difference is meant; the deviation is then recorded on the run, and
-the study package holds its own window to the cohort's.
+| 4 | `TFLS/` | the requested table shells, filled from stage 3 and suppressed | `TFLS/out/` |
+| 5 | `dashboard/` | the Domino app over a finished run, and the snapshot job that feeds it | the job: a study run and a snapshot per scenario; the app writes nothing |
 
 Dependencies run one way. `lot/` names no cohort and resolves nothing outside
-itself; the stages after it read the tables a run wrote.
+itself; the stages after it read the tables a run wrote. Each stage's own doc
+is where to start on it: `ndmm/README.md`, `lot/CONTENTS.md`,
+`variables/CONTENTS.md`, `TFLS/README.md` and `dashboard/DASHBOARD.md`. The
+last section below says which doc answers what.
 
 ---
 
 ## Before the first run
 
 **Code lists are not in here.** They are CSV files on production, read from
-`CODELIST_DIR`, and nothing loads without them: a missing file, an unknown
-filename, a missing column or an empty file stops the run and says which.
-`variables/CODELISTS.md` lists every file, its required columns and
-the code types it may carry, and marks the ones still to be authored.
+`CODELIST_DIR`. In the cohort and LOT builds a missing file, an unknown
+filename, a missing column or an empty file stops the run and says which. The
+study package falls back to `variables/codelists/`, which ships the shapes with
+no codes, so give it `CODELIST_DIR` as well; there a module whose list is
+unusable is left out by name under `MODULES=all` (the default), and stops the
+run if `MODULES` names it. `variables/CODELISTS.md` lists every file, what it
+must carry and which are still to be authored.
 
 **Warehouse settings** come from the environment, which beats `config.csv` in
-each folder. `DATABRICKS_PWD` is read from the environment only — never from a
-file, and no file here holds one.
+each folder. `DATABRICKS_PWD` is read from the environment only — every stage
+ignores it in a `config.csv`, and no file here holds one.
+
+**Cohort settings.** Every setting of stage 1 is written once, in
+`ndmm/config.csv` or the environment, and reaches both the contract check and
+the SQL; `ndmm/README.md` "Settings" lists them. The ones in the build's
+`CONTRACT` — the study period and the 1L index floor among them — are what the
+cohort *is*, so the build refuses a value that differs unless
+`NDMM_CONTRACT_OVERRIDE=TRUE` says the difference is meant. The deviation is
+then recorded on the run, and the study package holds its own window to the
+one the cohort recorded (`SETTINGS_OVERRIDE=TRUE` lets it go on, recording the
+disagreement as a deviation).
+
+**1L index exclusions.** Protocol s7.2.1.1 bars panobinostat and elotuzumab
+from setting the 1L index, and only the cohort build can apply that: set
+`NDMM_INDEX_EXCLUDED_ABBRS` in `ndmm/config.csv` to the code list's
+abbreviations for both, with `|` between entries (`ndmm/README.md` has the
+details). The study package reads what the cohort build recorded and stops on
+a cohort that barred less (`COHORT_INDEX_EXCLUSIONS` in `variables/config.csv`).
 
 **Open questions.** `variables/OPEN_QUESTIONS.md` lists every protocol
 question still with the study team and the reading this build takes meanwhile.
 Each reading is recorded on the run itself, in `S_RUN_METADATA`, so a number
 can always be traced to the assumption behind it.
 
-**The lines have changed, so an earlier LOT run is stale.** Three defects in
-the returning-drug rule (`lot/LOT_RULES.md` 4.8) are fixed in this build. All
-three were a line a transplant opened claiming treatment that was not its own,
-so where they fire a line comes BACK: the worked cases go from three lines to
-four. Each has a vignette in `lot/validation/out/lot_edge_case_vignettes.md`.
+**Which LOT run step 3 will read.** It refuses a LOT run that finished on or
+before `LOT_RULES_EPOCH` (shipped `2026-09-22`, the date the line rules last
+changed; compared by calendar date, so a run finished on that day is refused
+too), so a LOT run built before then has to be rebuilt. `LOT_CODE_MD5` is
+blank and checks nothing; set it to the `LOT_RUN_METADATA.CODE_MD5` of the LOT
+run the study team approved and step 3 refuses a run built by any other code.
+`S_RUN_METADATA` records the floor applied (`LOT_RULES_EPOCH`) and the
+fingerprint of the LOT run read (`LOT_CODE_MD5`). Neither check covers the code
+lists: each LOT run records the lists it read, with their digests, in
+`<prefix>LOT_CODELIST_METADATA`, so a changed list shows when two runs are
+compared but is not refused.
 
-  1. A drug the fold gave an EARLIER line, returning inside a line a
-     transplant or CAR-T opened - that line used to claim the return instead
-     of ending on it. `returning_drug_second_return_across_transplant`.
-  2. A dose the transplant override had already refused, which the arrival
-     scan passed over because it is a fold-set drug: a later dose of the same
-     course folded into the line that refused dose had ended, swallowing the
-     line it opened. `returning_drug_refused_dose_is_an_arrival`.
-  3. The same, for a dose on the transplant's OWN date, which is outside both
-     of those scans. `returning_drug_same_day_as_the_transplant`.
-
-The attrition's progression rows and every per-line variable downstream of
-them move with the counts. That is the correct answer,
-not a regression - but it is a difference to expect rather than to discover in
-the rebuilt QC summary.
-
-**The study window has moved as well**, to `2018-01-01` with a 1L index floor
-of `2019-01-01` (`variables/OPEN_QUESTIONS.md` Q1). Those are now the shipped
-defaults of `ndmm/`, `lot/engine/` and `variables/` alike, and a cohort built
-to the earlier window is refused twice over: the LOT build stops on a cohort
-that indexes before its study start, and the study package refuses a cohort
-whose recorded window is not its own.
-
-So **all five steps have to be re-run, from step 1**: the cohort at the new
-window, then the LOT run on that cohort, then steps 3 to 5. Tables built from
-the earlier runs describe a cohort and lines this code no longer produces.
-
-**And the step-3 tables have to GO, not just be rebuilt.** Inserts are
-positional, so a table this version declares with columns the last version did
-not have cannot be written into - the run stops on it rather than putting
-values in the wrong columns:
+**A prefix reused across package versions.** Inserts are positional, so an
+`S_*` table already under the prefix with different columns from the ones this
+package declares stops the run rather than taking values into the wrong
+columns:
 
 ```
 Error: SCHEMA ERROR: <catalog>.<schema>.s223926_S_COHORT exists with a
 different shape.
-  declared: ... IN_COHORT INT, CRITERIA_ASKED STRING, NESTED INT
-  found:    ... IN_COHORT INT
 ```
 
-That is an output prefix reused across package versions, and there are two
-answers. Either drop what the old version left:
+Either drop what the old version left:
 
 ```sql
 SHOW TABLES IN <catalog>.<schema> LIKE 's223926_*';   -- then DROP each
 ```
 
-or point this run at a prefix of its own, `OBJECT_PREFIX=s223926b_`, and carry
-the same value into step 4 as `TFLS_PREFIX` and into the dashboard. Nothing is
-lost either way - every `S_*` table is rebuilt from steps 1 and 2 - and a
-fresh prefix leaves the previous run readable while the new one is checked.
-
-**Not on the epoch day.** Step 3 refuses a LOT run that finished on or before
-`LOT_RULES_EPOCH` (below), and the shipped date is the day the rules last
-changed. A step 2 run finished on that calendar date is refused, so build it
-the day after or later — or set `LOT_RULES_EPOCH` to an earlier date on
-purpose and pin `LOT_CODE_MD5` to the rebuilt engine, so the run is still held
-to the code that built it.
-
-`LOT_RUN_METADATA.CODE_MD5` is what tells an old run from a new one. It
-fingerprints the engine's R, so a run built before this fix carries a different
-one - no value is quoted here, because the fingerprint moves whenever the
-engine does and a number in a document would go quietly stale. Read it off the
-rebuilt run and compare.
-
-It is recorded on every LOT run, and on every study run that reads one
-(`S_RUN_METADATA.LOT_CODE_MD5`), so a table can always be traced back to the
-code behind it. But it is only CHECKED where `LOT_CODE_MD5` is set: unset, it
-checks nothing and a stale LOT run flows through in silence.
-
-Step 3 refuses one by date as well, and that check is on by default. It stops
-any LOT run that finished **on or before** `LOT_RULES_EPOCH`, which ships as
-the date the rules last changed — so a run built before this fix is refused
-whether or not anyone pinned a fingerprint. On or before, because the
-comparison is by calendar date and a rule change lands at a time of day: a run
-finished on that date cannot be placed either side of it, and the check refuses
-what it cannot place. The cost is one day's runs; the alternative is reading a
-superseded number in silence. Set it only to name a different floor:
-
-```bash
-LOT_RULES_EPOCH=2026-09-22    # shipped; a run finished on or before this stops
-```
-
-Whichever floor applied is recorded on the run, in
-`S_RUN_METADATA.LOT_RULES_EPOCH`.
-
-The shipped date is held to the engine beside it. The study suite fingerprints
-`lot/engine` — its R and the settings it ships — and compares both to the
-fingerprints the shipped epoch was set for. A change to the rules therefore
-stops the suite until someone looks at it, and what they are told to do is move
-the date to the date of the change and re-pin the fingerprints with it.
-
-That is a prompt, not an interlock. The three values sit together and are
-reviewed together, but they are three comparisons: re-pinning a fingerprint and
-leaving the date would pass. What the check makes impossible is changing the
-rules and nobody noticing — which is what happened twice before it existed. Each
-time the engine changed, the date did not, and every run built in between passed
-a check written to stop exactly those runs.
-
-What the tie cannot see is the code lists. They live under `CODELIST_DIR` on the
-platform rather than in this folder, so a rollup that moves a drug to another
-agent moves lines without moving either fingerprint. Each run records the code
-lists it read, with their digests, in `<prefix>LOT_CODELIST_METADATA` — so such
-a change is *visible* on the run afterwards, by comparing two runs' rows. It is
-not *checked*: nothing refuses a run for reading a code list no one approved,
-the way the epoch refuses one built before a rule change. That is the same limit
-`LOT_CODE_MD5` has always had.
-
-The two checks answer different questions. The epoch says WHEN a run executed
-and everybody gets it; `LOT_CODE_MD5` says WHAT executed, exactly, and is
-opt-in. A run built after the epoch by code you have not approved passes the
-first and is caught only by the second. So after the
-rebuild, read the new run's `CODE_MD5` and pin it - that is what makes step 3
-stop on the wrong run instead of building on it.
-
-```bash
-# after step 2, from LOT_RUN_METADATA for the run you just built
-LOT_CODE_MD5=<the 32 characters that run recorded>
-```
-
-`qc/run_lot_qc.R` on the rebuilt run is the confirmation: check `C5` reads zero.
+or give this run a prefix of its own, `OBJECT_PREFIX=s223926b_`, and carry the
+same value into step 4 as `TFLS_PREFIX` and into the dashboard. Nothing is
+lost either way — every `S_*` table is rebuilt from steps 1 and 2.
 
 ---
 
@@ -193,11 +110,12 @@ CL=/mnt/code/codelist          # where the authored code lists live
 
 ```bash
 # 1. the cohort and its attrition.  Writes $COHORT and ndmm_NDMM_ATTRITION.
-#    The prefix is POSITIONAL and must end in '_'.
+#    The prefix is POSITIONAL (or OBJECT_PREFIX) and must end in '_'.
 CODELIST_DIR=$CL DATABRICKS_PWD="$DATABRICKS_PWD" PROJECT_WORK_SCHEMA=$SCHEMA \
   Rscript ndmm/build.R ndmm_
 
-# 2. lines of therapy.  Cohort table and prefix are POSITIONAL.
+# 2. lines of therapy.  Cohort table and prefix are POSITIONAL
+#    (or INPUT_COHORT_TABLE and OBJECT_PREFIX).
 CODELIST_DIR=$CL DATABRICKS_PWD="$DATABRICKS_PWD" PROJECT_WORK_SCHEMA=$SCHEMA \
   Rscript lot/engine/build.R $COHORT ndmm_
 
@@ -214,13 +132,14 @@ DRY_RUN=TRUE INPUT_COHORT_TABLE=$COHORT OBJECT_PREFIX=s223926_ \
   Rscript variables/build.R
 ```
 
-**Three prefixes, and step 3 needs all three.** `OBJECT_PREFIX` is where the
-study run WRITES; `LOT_PREFIX` and `COHORT_PREFIX` are where it READS what
-steps 2 and 1 wrote. Each of the two read-prefixes defaults to
-`OBJECT_PREFIX`, which is right only when one prefix built everything — and
-the commands above do not, so both have to be named. Leave `COHORT_PREFIX`
-out and the run looks for the cohort's metadata under the study prefix, finds
-nothing, and says so twice:
+**Step 3 needs three prefixes.** `OBJECT_PREFIX` is where the study run
+WRITES; `LOT_PREFIX` and `COHORT_PREFIX` are where it READS what steps 2 and 1
+wrote. Each read prefix defaults to `OBJECT_PREFIX`, which is right only when
+one prefix built everything — the commands above do not, so both are named.
+Leave `COHORT_PREFIX` out and the run looks for the cohort build's status and
+metadata under the study prefix: the lineage check stops on "no cohort build
+status could be found", and the upstream-settings and index-exclusion checks
+are logged as unverified rather than made:
 
 ```
 upstream settings unverified: could not read <catalog>.<schema>.s223926_NDMM_RUN_METADATA
@@ -228,20 +147,12 @@ WARNING: whether the cohort build barred panobinostat and elotuzumab from
          setting the 1L index is unverified
 ```
 
-Both are the same missing setting. Neither stops the run — `s7.2.1.1` and the
-upstream-settings check are then simply not made, which is the thing they
-exist to prevent.
-
-**`LOT_ALLOW_UNPROVEN_LINEAGE=TRUE` hides this.** It waives "no cohort build
-status found", and a wrong `COHORT_PREFIX` produces exactly that message. Set
-the prefix and leave the waiver unset: then the lineage check reads the
-cohort's own status row and the binding is proven rather than assumed. If the
-run still cannot find it, that is a real absence and worth knowing about
-before the numbers are.
+Set the prefix rather than `LOT_ALLOW_UNPROVEN_LINEAGE=TRUE`: that waiver
+exists for a lineage that could not be proven, and it would carry the run past
+exactly this message.
 
 ```bash
-
-# 4. the requested table shells
+# 4. the requested table shells - from the folder holding TFLS/ and variables/
 TFLS_SOURCE=warehouse TFLS_PREFIX=s223926_ PROJECT_WORK_SCHEMA=$SCHEMA \
   TFLS_PACKAGE_DIR=variables \
   DATABRICKS_PWD="$DATABRICKS_PWD" Rscript TFLS/run_tfls.R
@@ -255,47 +166,32 @@ DATABRICKS_PWD="$DATABRICKS_PWD" PROJECT_WORK_SCHEMA=$SCHEMA CODELIST_DIR=$CL \
 DASH_SOURCE=snapshot DASH_SNAPSHOT_DIR=/mnt/data/NDMM bash dashboard/app.sh
 ```
 
-**Step 5 runs step 3 again, once per row of `dashboard/scenarios.csv`.** The
-settings on step 3's line apply to that command only, so they are given again
-here. Without the cohort table or either read prefix the Job stops before
-building anything and names what is missing: a read prefix left blank would
-be read as each scenario's own, which is where it writes, not where steps 1
-and 2 wrote. Without `CODELIST_DIR` every module whose list is still the
-shipped blank template is left out of every scenario. Anything else step 3
-was given — `LOT_CODE_MD5`, `MODULES`, `SKIP_MODULES` — goes on this line
-too.
+**Step 5 runs step 3 again, once per row of `dashboard/scenarios.csv`,** so
+the settings on step 3's line are given again. Without the cohort table or
+either read prefix the Job stops before building anything and names what is
+missing. Without `CODELIST_DIR` every module whose list is still the shipped
+blank template is left out of every scenario. Anything else step 3 was given —
+`LOT_CODE_MD5`, `MODULES`, `SKIP_MODULES` — goes on this line too.
+`dashboard/DEPLOY_DOMINO.md` has the Domino Job and App setup and the
+deployment controls that are **not** in the code.
 
-**One connection.** All five open the warehouse through one line of code -
-the LOT engine's `DBI::dbConnect(odbc::odbc(), dsn = DATABRICKS_DSN, pwd =
-DATABRICKS_PWD, timeout = 120)`, which the study package carries character for
-character, and which TFLS and the dashboard reach by calling the study
-package's `connect_db()` rather than having one of their own. And all five
-read the same three facts under the LOT engine's names: `PROJECT_WORK_SCHEMA`
-(or the Domino user's own schema where it is unset), `DATABRICKS_CATALOG` and
-`INPUT_COHORT_TABLE`. So an environment that carried the cohort build carries
-the LOT build, the study run, the fill and the dashboard's warehouse mode too; `TFLS_*` and
-`DASH_*` names exist only for a fill or a page that has to look elsewhere.
+**Connection and schema.** Every stage connects over the ODBC DSN in
+`DATABRICKS_DSN` (default `RWDE`) with `DATABRICKS_PWD`; TFLS and the
+dashboard use the study package's own `connect_db()` rather than one of their
+own. All of them read the same names: `PROJECT_WORK_SCHEMA` (or the Domino
+user's own schema where it is unset), `DATABRICKS_CATALOG` (default
+`hive_metastore`) and `INPUT_COHORT_TABLE`. `TFLS_*` and `DASH_*` names exist
+only for a fill or a page that has to look elsewhere. The study run also takes
+`WORK_SCHEMA`, ahead of `PROJECT_WORK_SCHEMA`: it moves both the schema its
+`S_*` tables are written into and the one it reads the cohort and LOT tables
+from. The fill and the dashboard resolve the schema in the study run's order
+and accept `catalog.schema` as it does; set only `PROJECT_WORK_SCHEMA`, as the
+commands above do, and every stage reads the same schema.
 
-The study run takes one name the other two do not: `WORK_SCHEMA`, ahead of
-`PROJECT_WORK_SCHEMA`. It moves the whole of that run — the schema its `S_*`
-tables are written into, and the schema it reads the cohort and LOT tables
-from — so setting it points the run at one schema entirely. The fill and the
-dashboard read those `S_*` tables, so they resolve the schema in the study
-run's order rather than the LOT build's; set only `PROJECT_WORK_SCHEMA`, as
-the commands above do, and the two orders are the same answer. All three
-accept `catalog.schema` and read it as the study run does, the catalog
-stripped when it matches. The
-study suite checks the line and the variable against the engine's source
-whenever the folders sit together. The password is read from the environment
-alone, by every one of them.
-
-Keep the variables **inline per command**, as above. `STUDY_START`, `MAX_LOT`
-and `CENSOR_AT_DISENROLLMENT` are read by both step 1 and step 2 from the same
-environment variable name with deliberately different defaults, so an `export`
-silently moves one of them off its intended value.
-
-`dashboard/DEPLOY_DOMINO.md` has the Domino Job and App setup, the environment
-variables each needs, and the deployment controls that are **not** in the code.
+**Keep the variables inline per command**, as above. `MAX_LOT` and
+`CENSOR_AT_DISENROLLMENT` are read by steps 2 and 3 under the same name with
+deliberately different defaults (`5` and `4`; `FALSE` and `TRUE`), so an
+`export` silently moves one of them off its intended value.
 
 ---
 
@@ -349,49 +245,71 @@ Rscript TFLS/tests/test_tfls.R
 (cd lot/validation && Rscript tests/test_vignettes.R)
 ```
 
-Each prints how many assertions it made. That number is not quoted in this
-document, or in any other here: nothing reads a number in a document, so it
-goes stale the next time a suite grows and then quietly misdescribes the thing
-it was written to describe. Run them and read it off the run.
+What they need:
 
-Installing `survival::` adds one assertion: the dashboard suite's Kaplan-Meier
-cross-check, which is skipped without it — and a skipped block makes that suite
-exit non-zero, because a run missing its executed blocks is not a clean run.
-Base R except for **`glue`**, which four of the twelve need — the two LOT
-engine suites through `tests/testutil.R`, melphalan, and the cohort's own
-runner. The other eight load nothing. The app needs `shiny`; a warehouse run
-needs `DBI`, `odbc` and `glue`.
-
-Four of the suites (the variables package, LOT QC's two, and melphalan) additionally **execute** the
-SQL they emit against fixtures where `python3` with `duckdb` and `sqlglot` is
-present. The dashboard suite does the same with `survival`, which it uses
-only to cross-check its own Kaplan-Meier against a second implementation.
-
-The dashboard suite also needs **`survival`** for a complete run — without it
-the Kaplan-Meier cross-check is skipped, the suite reports one skip and exits
-non-zero, and its count is one lower.
+- **Base R**, plus **`glue`** for the cohort's own runner, the two LOT engine
+  suites and melphalan.
+- **`python3` with `duckdb` and `sqlglot`** for the suites that execute the
+  SQL they emit against fixtures — the variables package, LOT QC's two and
+  melphalan.
+- **`survival`** for the dashboard suite's Kaplan-Meier cross-check against a
+  second implementation.
 
 **A suite that could not run part of itself does not exit clean.** Every suite
 ends with `N passed, N failed, N skipped`, names each skipped block and what
-was missing, and **exits non-zero when anything was skipped** — because a run
-missing its executed blocks has tested a fraction of what it claims, and
-`0 failed` reads as a clean run. To accept an incomplete run deliberately (a
-machine without `duckdb`, say), set `ALLOW_SKIPPED_TESTS=TRUE`; the skips are
-still printed. The counts above are for a complete run.
+was missing, and exits non-zero when anything was skipped. To accept an
+incomplete run deliberately (a machine without `duckdb`, say), set
+`ALLOW_SKIPPED_TESTS=TRUE`; the skips are still printed.
+
+The app needs `shiny`; a warehouse run needs `DBI`, `odbc` and `glue`.
 
 ---
 
 ## Disclosure
 
 Counts are suppressed below a floor of **25** patients, the protocol's, and the
-floor may only rise — never fall. A withheld cell must not be recoverable by
-subtraction, so the release module closes the sums and reports in
-`S_RUN_METADATA` anything it could not close. The snapshot job refuses to
-export such a run, the dashboard refuses to show those tables, and the shell
-runner refuses to fill from them; each has one named override that says on the
-run that it was set.
+floor may only rise — never fall. The study package's release module writes an
+`S_*_RELEASE` copy of each of seven aggregated tables (`SUPPRESSION_SPEC` in
+`variables/R/registry.R`) with every cell under the floor withheld, and records in `S_RUN_METADATA` (`RELEASE_RECOVERABLE`, and the
+tables it is about in `RELEASE_RECOVERABLE_TABLES`) any group where one
+withheld cell is still the group's total less the published rest. It does not
+regroup; that is the analyst's call. The snapshot job refuses to export such a
+run, the dashboard refuses to show those tables, and the shell runner refuses
+to fill from them; each has one named override that says on the run that it
+was set. The shell runner also closes every sum its own tables draw
+(`TFLS/README.md` "Disclosure").
 
 Read `dashboard/DEPLOY_DOMINO.md` under **Deployment controls** before sharing
 anything this produces. A snapshot holds patient-level tables and is as
 sensitive as the warehouse; the shell output in `TFLS/out/` is the artefact
 meant to be shared, after disclosure review.
+
+---
+
+## Which doc answers what
+
+| question | doc |
+|---|---|
+| how the cohort is built, what it writes, every setting | `ndmm/README.md` |
+| the cohort's inclusion and exclusion rules | `ndmm/RULES.md` |
+| why each cohort rule reads the way it does, and what is pending sign-off | `ndmm/DECISIONS.md` |
+| what each file of the cohort build does | `ndmm/FILES.md` |
+| the LOT packages, how to run them and their checks | `lot/CONTENTS.md` |
+| every LOT rule, as a reference | `lot/LOT_RULES.md` |
+| every LOT rule, with a worked patient timeline | `lot/LOT_RULES_EXPLAINED.md` |
+| what each file of `lot/` does | `lot/FILES.md` |
+| moving the LOT engine to another data source | `lot/PORTING.md` |
+| the protocol, the cohorts, what the protocol does not yet specify | `variables/README.md` |
+| the study package's files, modules and how to run it | `variables/CONTENTS.md` |
+| what each module computes | `variables/MODULES.md` |
+| the eligibility rules as the protocol states them | `variables/IE_CRITERIA.md` |
+| which of them this build applies, where, and how to change one | `variables/IE_CRITERIA_APPLIED.md` |
+| every variable the protocol asks for | `variables/VARIABLES.md` |
+| where each rule and variable comes from in Optum | `variables/DATA_MAPPING.md` |
+| the code check against the protocol, requirement by requirement | `variables/CONFORMANCE.md` |
+| the questions still with the study team, and the reading taken meanwhile | `variables/OPEN_QUESTIONS.md` |
+| which code lists are needed, present and outstanding | `variables/CODELISTS.md` |
+| the shape of each shipped code list | `variables/codelists/README.md` |
+| the table shells: filling them, editing them, their disclosure rules | `TFLS/README.md` |
+| the app: its tabs, controls and where its numbers come from | `dashboard/DASHBOARD.md` |
+| deploying the Job and the App on Domino, and the deployment controls | `dashboard/DEPLOY_DOMINO.md` |

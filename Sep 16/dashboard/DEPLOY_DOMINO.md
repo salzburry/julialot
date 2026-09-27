@@ -1,13 +1,13 @@
-# Running the scenario explorer on Domino
+# Running the dashboard on Domino
 
-Two pieces, the same pattern the LOT pipeline already uses: a **Job** builds
-the scenarios, an **App** serves them.
+Two pieces: a **Job** builds the scenarios and exports them to a snapshot, an
+**App** serves the snapshot. What the app shows is `DASHBOARD.md`; this file is
+the deployment steps and the controls the code cannot enforce.
 
 ## 0. Compute environment (once)
 
-R plus `shiny`. Nothing else is required — the plots are base graphics and the
-Kaplan–Meier estimator is written out, precisely so a missing package cannot
-silently produce nothing.
+R plus `shiny`. Nothing else is required to serve the App — the plots are base
+graphics and the Kaplan–Meier estimator is written out.
 
 ```r
 install.packages("shiny")
@@ -21,73 +21,84 @@ Bake them into the environment's Dockerfile so the App starts fast.
 ## 1. Smoke test with no data
 
 Deploy the App with nothing set. It comes up on synthetic scenarios and says so
-on every page. This is worth doing first: it proves the environment, the
-launcher and the port before any warehouse question is involved.
+on every page. This proves the environment, the launcher and the port before
+any warehouse question is involved.
 
 ## 2. Build the scenarios — Domino **Job**
 
-Run the cohort build and the LOT build first, then:
+Run the cohort build and the LOT build first (`../README.md`), then:
 
 ```bash
 export DATABRICKS_PWD=...              # a Domino secret, never a config file
 export PROJECT_WORK_SCHEMA=...
 export INPUT_COHORT_TABLE=ndmm_NDMM_COHORT     # what the study run reads -
-export LOT_PREFIX=ndmm_                        #   the same three step 3 of the
-export COHORT_PREFIX=ndmm_                     #   top-level README was given
+export LOT_PREFIX=ndmm_                        #   the same three step 3 of
+export COHORT_PREFIX=ndmm_                     #   ../README.md was given
 export CODELIST_DIR=/mnt/code/codelist
 export DASH_SNAPSHOT_DIR=/mnt/data/NDMM        # a Domino Dataset, mounted under /mnt/data
 Rscript dashboard/jobs/build_scenarios.R       # from wherever the folders sit
 ```
 
-Each row is a full study run, so the Job needs what that run reads as well as
-where it writes. A grid row supplies only `OBJECT_PREFIX` and the question it
-changes. Without the cohort table or either read prefix, the Job stops before
-the first build and names what is missing: a read prefix left blank would be
-each scenario's own, not where the cohort and LOT builds wrote. Without
-`CODELIST_DIR`, every module whose code list is still the shipped blank
-template is left out of every scenario.
+`build_scenarios.R [scenarios.csv] [out_dir]` takes the grid and the snapshot
+root as optional arguments; they default to `dashboard/scenarios.csv` and
+`DASH_SNAPSHOT_DIR`.
 
-The Job connects exactly as the LOT build and the study run did - the study
-package's own `connect_db()`, on `DATABRICKS_DSN` and `DATABRICKS_PWD` - and
-reads where they wrote: `PROJECT_WORK_SCHEMA` (or the Domino user's own schema
-where it is unset) and `DATABRICKS_CATALOG`. Where `WORK_SCHEMA` is also set,
-it wins — it is the study run's own override for the schema it writes into and
-reads the cohort and LOT tables from, and this Job reads what it wrote.
+**One row of `scenarios.csv` is one full study run.** `prefix` is the
+`OBJECT_PREFIX` it writes under - unique, compared without case, and letters,
+digits, `.`, `_` and `-` only, since it also names a directory. Every other
+upper-case column is set as an environment variable for that run and nothing
+else, so **the column name is the variable name** and a new open question is
+available the moment the package reads it. A value that is itself a list, such
+as `ED_DEFINITION`'s `revenue,pos`, is quoted in the file. The dashboard's test
+suite runs every shipped row through the package's config, so a value the
+package would refuse fails there rather than on the cluster.
 
-`DASH_WORK_SCHEMA` and `DASH_CATALOG` are the **app's** overrides, not this
-Job's: the Job resolves the warehouse through the study package's own
-configuration, so it writes a snapshot of the schema that package reads. Point
-the app elsewhere with those two; point the Job elsewhere by giving it the
-study run's own names.
+**What every row reads is the Job's own.** `INPUT_COHORT_TABLE`, `LOT_PREFIX`
+and `COHORT_PREFIX` come from the Job's environment (or a column of the same
+name); without any of them the Job stops before the first build and names what
+is missing, since a read prefix left blank would be each scenario's own.
+Without `CODELIST_DIR`, every module whose code list is still the shipped blank
+template is left out of every scenario. Anything else step 3 was given -
+`LOT_CODE_MD5`, `MODULES`, `SKIP_MODULES` - is set on the Job too.
 
-One row of `scenarios.csv` is one run. `prefix` is the `OBJECT_PREFIX` it
-writes under; every other upper-case column is set as an environment variable
-for that run and nothing else, so **the column name is the variable name** and
-a new open question becomes available the moment the package reads it. A value
-that is itself a list, such as `ED_DEFINITION`'s `revenue,pos`, is quoted in
-the file. The dashboard's test suite runs every row through the package's
-config, so a value the package would refuse fails there rather than on the
-cluster.
+The Job connects exactly as the study run does - the study package's own
+`connect_db()`, on `DATABRICKS_DSN` and `DATABRICKS_PWD` - and reads where it
+wrote: `WORK_SCHEMA`, else `PROJECT_WORK_SCHEMA`, else the Domino user's own
+schema, in `DATABRICKS_CATALOG`. `DASH_WORK_SCHEMA` and `DASH_CATALOG` are the
+**App's** overrides, not the Job's.
 
-Each scenario runs in its own R process, and one that fails does not stop the
-others — the summary at the end says which failed, because a grid that quietly
-came back four-of-five would be read as five.
+**Each scenario runs in its own R process**, and one that fails does not stop
+the others. The summary at the end lists each scenario as built or failed and
+exported or not, and the Job exits non-zero if any failed.
 
-The Job then exports every table each run wrote to
-`/mnt/data/NDMM/<prefix>/<TABLE>.csv`, and the LOT build's outputs to
-`/mnt/data/NDMM/lot/<LOT_RUN_ID>.<build>/<TABLE>.csv`. LOT tables are
-filed by **run and build**, not by scenario: scenarios normally share one LOT
-run, so a copy each would waste the space and suggest they differ, and the
-build is in the name because the engine can build one run id more than once.
-A build a previous scenario already exported is reused. A scenario is
-exported only from a `complete` run, pinned before its first table is read
-and checked again after its last — and only the tables that run's own
-metadata says it wrote, with only the rows of the cohorts it selected: what
-an earlier run left under the prefix stays out of the snapshot. Re-run on each data refresh; the App reads the new snapshot on
-restart.
+**What is exported.** Each scenario's tables go to
+`<DASH_SNAPSHOT_DIR>/<prefix>/<TABLE>.csv`, and the LOT build's to
+`<DASH_SNAPSHOT_DIR>/lot/<LOT_RUN_ID>.<build>/<TABLE>.csv` - filed by run **and
+build**, not by scenario, because scenarios normally share one LOT run and the
+engine can build one run id more than once. A build already exported is
+reused, and the LOT prefix is copied only while its newest status row is the
+build the scenario read.
 
-Cost: one full study run per scenario. Five scenarios is five runs — start with
-two or three, and add rows as questions come up.
+- A scenario is exported only from a `complete` run, pinned before its first
+  table is read and checked again after its last; a rebuild in between stops
+  the export.
+- Only the tables that run's own metadata says it wrote, with only the rows of
+  the cohorts it selected: what an earlier run left under the prefix stays out.
+  A run that recorded no modules or no cohorts exports nothing.
+- A run whose release record is not `none` is not exported
+  (**Deployment controls** below).
+- The tables are staged and the scenario's directory swapped whole, so a
+  refresh that fails leaves the previous snapshot in place. A refresh *killed*
+  mid-swap leaves the previous snapshot set aside under a name no reader lists,
+  and the next export puts it back, or discards it where the swap had
+  completed, before it starts.
+- One export at a time into a root: an `.export.lock` directory refuses a
+  second Job, and one left by a killed Job is removed by hand, as its message
+  says.
+
+Re-run the Job on each data refresh; the App reads the new snapshot on
+restart. Cost: one full study run per scenario — start with two or three rows,
+and add rows as questions come up.
 
 ## 3. Publish the dashboard — Domino **App**
 
@@ -105,151 +116,121 @@ DASH_SNAPSHOT_DIR=/mnt/data/NDMM
 DASH_ALLOW_SYNTHETIC=FALSE
 ```
 
-The **Tables** tab fills the requested table shells from the `TFLS/` folder
-beside `dashboard/`. An App published from a checkout that carries it needs
-nothing set; where that folder sits somewhere else, `DASH_TFLS_DIR` names it.
+`DASH_ALLOW_SYNTHETIC=FALSE` makes an App left on synthetic numbers refuse to
+start and say why, so nobody quotes generated data because a default was left
+in place. A snapshot directory that is missing or empty lists no scenarios; it
+never falls back to synthetic data.
+
+The **Tables** tab fills the table shells from the `TFLS/` folder beside
+`dashboard/`; where that folder sits somewhere else, `DASH_TFLS_DIR` names it.
 Without it, that one tab says so and every other tab is unaffected.
 
-The snapshot lives in a Domino **Dataset** rather than in the Job's artifacts,
-because an App reads a Dataset it has attached and does not see another run's
-artifacts. Attach the Dataset to the App (the Data step of the publish
-dialog) and to the Job that writes it; both see it under `/mnt/data/<name>`.
+**The snapshot lives in a Domino Dataset**, because an App reads a Dataset it
+has attached and does not see another run's artifacts. Create the Dataset
+first: the Job does not make one, it writes into whatever is mounted at
+`DASH_SNAPSHOT_DIR`, so with no writable Dataset there it writes into the run's
+own container, which disappears with it, or fails on a read-only path. Create
+or select a writable Dataset in the project, attach it to the Job and to the App
+(the Data step of the publish dialog), and point `DASH_SNAPSHOT_DIR` at its
+mount.
 
-Create the Dataset first. The Job does not make one: it writes directories and
-files into whatever is already mounted at `DASH_SNAPSHOT_DIR`, so with no
-writable Dataset attached there it either writes into the run's own container,
-which disappears with it, or fails on a read-only path. Create or select a
-writable Dataset in the project, attach it to the Job and to the App, and point
-`DASH_SNAPSHOT_DIR` at its mount; the Job then fills in the scenario
-directories under it.
-
-`/mnt/data/NDMM` is the path a **local** Dataset of this project takes. A
-Dataset imported from another project, or a deployment on a different file
-system, mounts somewhere else and under a name the platform chooses. So read
-the mount path off the Data step of the publish dialog rather than assuming
-this one, and give `DASH_SNAPSHOT_DIR` what it says. The two only have to agree
-with each other: nothing in the app requires a particular path.
-
-The last one matters. It makes an App configured for synthetic numbers refuse
-to start and say why, so nobody quotes generated data because the default was
-left in place. A snapshot source whose directory is missing or empty lists no
-scenarios; it never falls back to synthetic data. Anything a stakeholder might
-quote belongs behind it.
+`/mnt/data/NDMM` is where a **local** Dataset named `NDMM` mounts. A Dataset
+imported from another project, or a deployment on a different file system,
+mounts elsewhere, so read the mount path off the Data step of the publish
+dialog and give `DASH_SNAPSHOT_DIR` that. The Job and the App only have to
+agree with each other.
 
 ## Deployment controls
 
-Three things about this deployment are not visible from inside the app, and
-each needs a decision rather than a default.
+These are not visible from inside the app, and each needs a decision rather
+than a default.
 
 **The Dataset is as sensitive as the warehouse.** The snapshot job exports
 every table the run wrote - the raw ones beside the released ones - because a
 table with no released copy has only its raw form and the App needs it. Several
 are one row per patient and carry `PATID`. The App drops identifiers and
-prefers released copies; a person with filesystem or project access to the
+prefers released copies, but a person with filesystem or project access to the
 Dataset is not going through the App. So keep the Dataset **private to the App
 and the Job**, and do not hand it out as a published extract.
 
-A shareable extract is not a subset of this one. The `S_*_RELEASE` tables are
-the six that have a released copy; the rest of what a panel draws — the
-attrition steps, the demographics, the line patterns, the time-to-event
-summaries — has no released copy at all, so an extract cut down to
-`S_*_RELEASE` is both **incomplete** for a reader and still **unsuppressed**
-wherever it is not. The way to produce something shareable is the shells:
-`TFLS/run_tfls.R` fills them from the run at a floor that may only rise and
-writes tables that carry no identifier and no cell under it — and it applies
-the release verdict below as well, so a table the run says has a recoverable
-cell is not filled from at all. Share those. Where a raw table itself has to go
-out, it is a disclosure review, not a file copy.
+A shareable extract is not a subset of it. Seven tables have an `S_*_RELEASE`
+copy; the rest of what a panel draws — the attrition steps, the demographics,
+the line patterns, the time-to-event summaries — has none, so an extract cut
+down to the released tables is both **incomplete** for a reader and still
+**unsuppressed** wherever it is not. The shareable artefact is the shells:
+`TFLS/run_tfls.R` fills them from the run at a floor that may only rise, writes
+tables that carry no identifier and no cell under the floor, and applies the
+release verdict below, so a table the run says has a recoverable cell is not
+filled from at all. Where a raw table itself has to go out, it is a disclosure
+review, not a file copy.
 
-The Dataset's own access is the one control here that is **not in the code**.
-Nothing here can enforce it: the job writes the files, and who
-may read them afterwards is set on the Domino Dataset and the project that
-owns it. Grant it to the App and the Job and to nobody else, and re-check it
-whenever the project's collaborators change — every other control on this page
-is downstream of that one holding. The same goes for the three overrides
+**Access to the Dataset is the one control not in the code.** The job writes
+the files; who may read them afterwards is set on the Domino Dataset and the
+project that owns it. Grant it to the App and the Job and to nobody else, and
+re-check it whenever the project's collaborators change — every other control
+here is downstream of that one holding. The three overrides
 (`SNAPSHOT_ALLOW_RECOVERABLE`, `DASH_ALLOW_RECOVERABLE`,
-`TFLS_ALLOW_RECOVERABLE`): each is deliberately settable, each says on the run
-that it was set, and none of them is a control against someone who can set
+`TFLS_ALLOW_RECOVERABLE`) are each deliberately settable and each says on the
+run that it was set; none of them is a control against someone who can set
 environment variables on the Job.
 
-**Keep the two outputs apart.** `TFLS/run_tfls.R` writes to `TFLS/out/`, which
-is not the Dataset and must not be moved into it. The private snapshot and the
-shareable tables are different artefacts with different audiences, and the way
-a private file becomes a shared one is a disclosure review of the shell output,
-not a copy out of the Dataset. Where they sit in one directory, the next person
-to grant access grants both.
+**Keep the two outputs apart.** `TFLS/run_tfls.R` writes to `TFLS/out/` (or
+`TFLS_OUT_DIR`), which is not the Dataset and must not be moved into it. The
+private snapshot and the shareable tables have different audiences; where they
+sit in one directory, the next person to grant access grants both.
 
 **A release that gives a withheld cell away does not leave the warehouse.**
 `mod_release()` withholds every cell under the floor, then records in
 `S_RUN_METADATA.RELEASE_RECOVERABLE` the groups where one withheld cell is
 still the group's total less the published rest, and in
-`S_RUN_METADATA.RELEASE_RECOVERABLE_TABLES` the tables those groups are in.
-The first is the sentence a person reads; the second is what a gate refuses
-on, because recovering table names from a sentence is a guess — reword the
-warning and it names none, and a blanket refusal follows from a change of
-wording rather than a change of risk. A run written before that column existed
-has no list, and the App falls back to the sentence, which refuses every
-released table when it names none. The snapshot job refuses to
-export such a run, and refuses a run whose record is absent or says the release
-module did not run. `SNAPSHOT_ALLOW_RECOVERABLE=TRUE` exports anyway and logs
-that it did. Whether to regroup or withhold a second stratum is the analyst's
-call; the job only declines to make it by default.
+`S_RUN_METADATA.RELEASE_RECOVERABLE_TABLES` the tables those groups are in -
+the second is what a refusal is decided on, the first is the sentence a person
+reads. The snapshot job refuses to export any run whose record is not `none`:
+a finding, `release module did not run`, or no record at all.
+`SNAPSHOT_ALLOW_RECOVERABLE=TRUE` exports anyway and logs that it did. Whether
+to regroup or withhold a second stratum is the analyst's call; the job only
+declines to make it by default.
 
 **A warehouse App is a second way in.** `DASH_SOURCE=warehouse` reads the
 tables live, so nothing it shows has been through the job. The App applies the
-same verdict on the read. Four states, and the App and the job agree on the
-first three; they part on the fourth, where the job is the gate and the App
-says so instead:
+same verdict on each read; it parts from the job only where the run has no
+record, and says so instead:
 
 | the run's record says | the App shows |
 |---|---|
 | `none` | everything |
-| a named finding, e.g. `S_SAFETY_RATES_RELEASE: 3 …` | everything except the tables `RELEASE_RECOVERABLE_TABLES` lists |
-| `release module did not run` | everything except the six that would have had a released copy — they have none, so what is under the prefix is the working table the release was meant to replace |
-| nothing at all | everything, with a notice: the job is the gate for that case, and re-exporting through it is what settles it |
+| a named finding, e.g. `S_SAFETY_RATES_RELEASE: 3 …` | everything except the tables `RELEASE_RECOVERABLE_TABLES` lists. Where that list is absent or names anything that is not one of the seven released tables, the finding's own text decides: the released tables it names, or all seven where it names none |
+| `release module did not run` | everything except the seven that would have had a released copy — they have none, so what is under the prefix is the working table the release was meant to replace |
+| nothing at all | everything, with a notice: the snapshot job refuses such a run, and re-exporting through it is what settles it |
 
 `DASH_ALLOW_RECOVERABLE=TRUE` shows the withheld tables anyway and the page
 says it is doing so. That is the setting a **single analyst** reading their own
-unreleased run wants; it is not one to leave on for a shared App.
-
-Prefer the snapshot for anything more than one analyst: it has been through the
-gate, the App has not.
+unreleased run wants; it is not one to leave on for a shared App. Prefer the
+snapshot for anything more than one analyst: it has been through the job's
+check, the App has not.
 
 **Names that reach a query are quoted, not matched.** `DASH_CATALOG`,
 `DASH_WORK_SCHEMA`, `DASH_PREFIXES` and `DASH_LOT_PREFIX` reach SQL, so each
-goes in backtick-quoted — Spark's delimited identifier. That is what makes a
-leading underscore, a hyphen, an all-digit name or a reserved word read
-correctly, all of which a grammar used to refuse; and it is what closes
-injection, since a prefix of `x; DROP TABLE p; --` becomes one identifier with
-that name, which no warehouse has, so the read finds nothing instead of running
-it. What is still refused is only what quoting cannot survive: a backtick of
-its own, a control character, and an empty name.
-
-`DASH_PREFIXES` is the exception, and is checked as well as quoted: a snapshot
-source pastes it into a **file path**, where there is no quoting and a segment
-holding a slash or a dot-dot reads somewhere else. So a prefix has to be
-letters, digits, underscore, dot or hyphen, starting with a letter or a digit.
-`TFLS_PREFIX` is the same name for the same reason.
+goes in backtick-quoted, Spark's delimited identifier: a leading underscore, a
+hyphen, an all-digit name or a reserved word reads correctly, and a prefix of
+`x; DROP TABLE p; --` is one identifier no warehouse has, so the read finds
+nothing instead of running it. What is refused is only what quoting cannot
+hold: a backtick of its own, a control character, and an empty name.
+`DASH_PREFIXES` is also pasted into a **file path** by a snapshot source, so a
+prefix there has to be letters, digits, underscore, dot or hyphen, starting with
+a letter or a digit; `TFLS_PREFIX` is held to the same rule for the same reason.
 
 ## Reading the warehouse directly instead
 
-`DASH_SOURCE=warehouse` with `DASH_WORK_SCHEMA` and `DASH_CATALOG` set reads
-the `S_*` tables live, and scenarios are discovered by looking for tables whose
-name ends in `S_RUN_METADATA`. The connection is the study package's own, over
-the Databricks ODBC DSN by default, so the App then needs `DATABRICKS_PWD` as
-well. Add `DASH_LOT_PREFIX` for the LOT tabs — the
-study's metadata records which LOT *run* a scenario read, not where that run
-wrote, and rows are then filtered to that run id so a prefix pointing at a
-different one is caught rather than drawn. The App opens one connection as it
-starts and every viewer shares it, re-querying on every control change, so the
-snapshot is the better default for anything more than one person.
-
-## What the App can and cannot do
-
-It reads. It creates, replaces and drops nothing, so an App left running cannot
-affect a study run. A scenario nobody has built does not appear; the helper
-that prints the command such a run needs (`scenario_command()` in
-`R/scenarios.R`) is not wired to the page — running one writes to the
-warehouse, and that belongs to whoever owns the schema. A run that is
-`started` or `failed` is listed with its settings, and its tables are not
-shown.
+`DASH_SOURCE=warehouse` reads the `S_*` tables live from the schema the study
+run wrote to (`DASH_WORK_SCHEMA` and `DASH_CATALOG` point it elsewhere).
+Scenarios are the tables whose name ends in `S_RUN_METADATA`, filtered by
+`DASH_PREFIX_PATTERN` (default `^s223926`) unless `DASH_PREFIXES` lists them.
+The connection is the study package's own, over the Databricks ODBC DSN by
+default, so the App needs `DATABRICKS_PWD` as well. Add `DASH_LOT_PREFIX` for
+the LOT tabs: the study's metadata records which LOT *run* a scenario read, not
+where that run wrote, and the prefix's newest status row has to be that run and
+build before any of its tables is read, so a prefix pointing at a different one
+is caught rather than drawn. The App opens one connection as it starts and every
+viewer shares it, re-querying on every control change, so the snapshot is the
+better default for anything more than one person.
