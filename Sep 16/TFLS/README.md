@@ -209,7 +209,13 @@ add up to beside the other columns could not be told. Either way every
 condition applies: the men under 75, whichever order they are written in.
 The fill and the suppression read a subgroup from one set of conditions, a
 named subgroup's included: `NEUROPATHY=YES&HAS_HISTORY=0` is one neuropathy
-row with a history of 1 and of 0, which is nobody, exactly as written out. Conditions that land on the same table
+row with a history of 1 and of 0, which is nobody, exactly as written out.
+A regimen class is read the same way, as the S_SOC rows of its line in its
+categories, so `ACD38_TRIP` and `S_SOC:LOT_NUM=1&SOC_CATEGORY=Triplet with
+anti-CD38 backbone` on line 1 are one population. A condition read off
+another cohort-specific table is carried back with its cohort: under 75
+across 1L and 2L is each patient's rows in the cohort where they were under
+75, not every row of a patient who was under 75 in either. Conditions that land on the same table
 are met by the same row of it - `CONCEPT=neuropathy&HAS_HISTORY=1` is a history
 of neuropathy, not a neuropathy row beside some other concept's history - and
 that table is read for the column's own cohort, since demographics are taken at
@@ -299,8 +305,9 @@ withheld.
 - **A number printed twice is one number.** The same row over the same
   population - a shell that repeats a row, or T1b, whose `Overall` columns and
   rows are T1's, or a class named once by its id and once by the category it
-  maps to, or a subgroup spelled two ways (`NEUROPATHY=YES` and `=Y`, or the
-  named subgroup and the rows it is read from) - counts once in every sum and
+  maps to, or a subgroup spelled two ways (`NEUROPATHY=YES` and `=Y`,
+  `AGE=LT75` and `S_DEMOGRAPHICS:AGE_YEARS<75`, a class and its categories
+  written out) - counts once in every sum and
   is withheld in every place it appears or in none. Counted twice, two printed
   copies summed past their total and the sum was taken for no sum at all, and
   a copy printed in one table printed what the other withheld.
@@ -349,7 +356,8 @@ withheld.
   Anything else stops the load: the patients in both are the two less what
   they cover together, so under 75 and 65 or over (60 + 60 - 100) give away
   the 20 aged 65 to 74, and so do 65 or over "of any sex", and the
-  quadruplets-or-triplets beside the triplets-or-doublets. Every split is found -
+  quadruplets-or-triplets beside the triplets-or-doublets, whether each is
+  a class or its categories written out on S_SOC. Every split is found -
   the search is complete, and does not depend on the order of the columns -
   and a shell whose columns overlap in more ways than the search closes (256
   over one population) stops at load.
