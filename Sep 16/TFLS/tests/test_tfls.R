@@ -61,7 +61,7 @@ check_skip_wiring <- function(path = .suite_path) {
     return(skip_note(paste0("this suite's own source could not be located, ",
                             "so its skip wiring is unchecked")))
   # A path that names no file is different: the suite worked out where it lives
-  # and got it wrong, which is a defect in this file rather than a missing
+  # and got it wrong, which is an error in this file rather than a missing
   # capability. It returned quietly before, and two suites that resolved their
   # path AFTER a setwd() spent every run with this guard off - silently, and
   # under exactly the invocation the runbook documents.
@@ -84,11 +84,8 @@ check_skip_wiring <- function(path = .suite_path) {
 test_report_status <- function(pass, fail, skipped) {
   cat(sprintf("%d passed, %d failed, %d skipped\n", pass, fail, skipped))
   if (skipped > 0L) {
-    # What actually skipped, in its own words. This used to print the same
-    # sentence in every suite - "Install duckdb and sqlglot" - whatever the
-    # block had skipped for. On the dashboard suite that named the wrong
-    # remedy: the block wanted survival::, both of the named packages were
-    # already installed, and the reader was sent to reinstall them.
+    # What actually skipped, in its own words, so the remedy printed is the
+    # one each block asked for.
     cat("  ", skipped, " block(s) did not run, so this is NOT a clean run:\n", sep = "")
     for (r in skip_reasons) cat("    - ", r, "\n", sep = "")
     cat("  Fix those, or set ALLOW_SKIPPED_TESTS=TRUE to accept it.\n")
@@ -285,7 +282,7 @@ stops_with(load_shells(write_shells(list(columns = c(BASE$columns[1:2],
   "already has a column T1_C4",
   "...and so does an id written by hand that a blank one's default collides with")
 
-# What a statistic cannot use it used to drop without a word.
+# What a statistic cannot use is refused, not dropped without a word.
 km_rows <- function(...) c(BASE$rows, ...)
 stops_with(load_shells(write_shells(list(rows = km_rows(
              "T1,12,FALSE,Events,1,km_events,S_TTE,TTNT>=3,,")))),
@@ -361,7 +358,7 @@ ok({ s <- class_selection("GAP", CL)
      identical(s$kind, "unmapped") && has(s$why, "no SOC category") },
    "a class mapped to nothing is unmapped, not empty: the cells say so rather than printing a zero")
 ok(identical(class_selection("Quadruplet", CL)$kind, "unknown"),
-   "a name that is neither a class nor a category is a defect in the shell")
+   "a name that is neither a class nor a category is an error in the shell")
 ok({ s <- class_selection("POM_TRIP", CL)
      identical(s$categories, "Other triplet (non-anti-CD38)") && s$drug == "POM" },
    "a class may refine the study's category with a drug the regimen has to hold")
@@ -442,7 +439,7 @@ ok(nrow(C) == 2 && near(C$SURV[1], 0.8) && near(C$SURV[2], 0.8 * 2/3) &&
 ok(is.na(km_median(C)) && stat_km_median(c(1,2,3,4,5), c(1,0,1,0,0))$text ==
      "not reached (1.0, not reached)",
    "a curve that never reaches 0.5 has no median, which is an answer and not a gap - and the interval keeps the bound the band does reach")
-# The reviewer's case. A hundred subjects, 45 events - 35 in the first month
+# A hundred subjects, 45 events - 35 in the first month
 # and ten in the second - and 55 censored at ten months. The curve floors at
 # 0.55 and never reaches a half, so there is no median; the band's lower limit
 # passes 0.5 at the second month, and that is a bound the data supports.
@@ -631,7 +628,7 @@ no_lone_unknown <- function(s, shell = NULL)
              function(r) isFALSE(r$exact) || sum(s$SUPPRESSED[r$members] == 1L) != 1L,
              logical(1)))
 
-# 1. The reviewer's first fixture, as numbers: the age block of T1 down one
+# 1. As numbers: the age block of T1 down one
 # column. The three bands are indented under the subtotal and sum to it.
 AGE <- shaped_cells("T1", "Age distribution at index (N%)", "1L_OVERALL",
   list(list(label = "<75 years",        indent = 1, n = 121),
@@ -640,7 +637,7 @@ AGE <- shaped_cells("T1", "Age distribution at index (N%)", "1L_OVERALL",
        list(label = "65 to 74 years",   indent = 2, n = 60),
        list(label = "75 years or more", indent = 1, n = 4)), 125)
 ok(121 - 60 - 60 == 1 && 125 - 121 == 4,
-   "the fixture is the reviewer's: the subtotal less its two published bands is the band of one, and the column N less the subtotal is the row of four")
+   "the subtotal less its two published bands is the band of one, and the column N less the subtotal is the row of four")
 SA <- suppress_cells(AGE, 25)
 ok(seen(SA, "18 to 44 years") %in% NA_real_ &&
      seen(SA, "75 years or more") %in% NA_real_,
@@ -663,7 +660,7 @@ ok(no_lone_unknown(SA),
 ok(identical(suppress_cells(SA, 25)$SUPPRESSED, SA$SUPPRESSED),
    "and the answer is a fixed point: running the rule again withholds nothing further")
 
-# 2. The reviewer's second fixture, as numbers: one row of T1b across its
+# 2. As numbers: one row of T1b across its
 # columns. The two subgroup columns partition the overall one.
 NEURO_COLUMNS <- data.frame(
   table_id = "T1b", label = c("Overall", "Baseline Neuropathy = Yes",
@@ -677,7 +674,7 @@ NEU <- shaped_cells("T1b", "Sex (N%)",
   c("1L_OVERALL", "1L_NEURO_YES", "1L_NEURO_NO"),
   list(list(label = "Male", indent = 1, n = c(60, 1, 59))), c(200, 30, 170))
 ok(60 - 59 == 1,
-   "the fixture is the reviewer's: the overall column less the published subgroup is the withheld one")
+   "the overall column less the published subgroup is the withheld one")
 SN <- suppress_cells(NEU, 25, list(columns = NEURO_COLUMNS))
 ok(seen(SN, "Male", "1L_NEURO_YES") %in% NA_real_,
    "the subgroup of one is withheld by the floor")
@@ -721,8 +718,8 @@ ok(sum(S2R$SUPPRESSED) == 2L && all(S2R$SUPPRESSED[S2R$ROW_LABEL == "White"] == 
 # 3. Three levels, two of them under the floor. The total less the published
 # level is the two withheld ones together - 100 - 80 = 20 men across the two
 # neuropathy groups - and 20 is a count of patients under the floor whether or
-# not it says how it splits. It used to be published, on the reasoning that no
-# single cell could be isolated; but the suite withholds "ten men" further down
+# not it says how it splits. It is withheld even though no single cell can
+# be isolated: the suite withholds "ten men" further down
 # because 40 - 30 gives them away, and "20 men in these two groups" is the same
 # disclosure split in two. So the level of 80 goes too.
 THREE <- shaped_cells("T1b", "Sex (N%)",
@@ -1182,9 +1179,8 @@ ok(all(c("REASON", "REASON_KIND", "SUPPRESSED", "FILLED") %in% names(render_csv(
    "...and carries why each cell is what it is")
 
 cat("\n-- the generated contract, against the package that emits it --\n")
-# R/scope.R no longer restates the package's registry; it reads the contract
-# the package emits. The restatement is gone, so the drift it could carry is
-# gone with it - but the shipped COPY can still fall behind the registry, and
+# R/scope.R does not restate the package's registry; it reads the contract
+# the package emits. The shipped COPY can still fall behind the registry, and
 # this is what stops that: regenerate from the package and compare.
 #
 # Byte-for-byte, not field-by-field. A field comparison passes a file that is
@@ -1340,9 +1336,9 @@ local({
 
 # Every way the shipped contract can be wrong, refused rather than read.
 #
-# It used to be read loosely: any RELEASED value that was not "1" became FALSE,
-# blank keys passed, a duplicate table passed, and a truncated file passed. All
-# four failures push the SAME direction - the reader believes fewer tables are
+# Read loosely - any RELEASED value that is not "1" taken as FALSE, blank keys,
+# a duplicate table, a truncated file - all four failures would push the SAME
+# direction - the reader believes fewer tables are
 # released than really are - and believing less here means the recoverability
 # gate has nothing to refuse. So each is a stop.
 local({
@@ -1454,7 +1450,7 @@ local({
   ok(identical(read1(file.path(d3$out, "tfls_t1.csv")), "OLD1") &&
        identical(read1(file.path(d3$out, "tfls_t3.csv")), "OLD3") &&
        identical(read1(file.path(d3$out, "tfls.md")), "OLD-MD"),
-     "...and every table of the run that WAS published is back, so the delivery is one run's and not two halves")
+     "...and every table of the run that WAS published is back, so the published set is one run's and not two halves")
   ok(is.na(e) || grepl("previous run has been put back", e, fixed = TRUE) ||
        grepl("still published and unchanged", e, fixed = TRUE),
      "...and the message says so, rather than claiming nothing was touched when files had already gone")
@@ -1879,9 +1875,8 @@ ok(has(RUNNER, "is.na(sql_name(sch$value))") && has(RUNNER, "is.na(sql_name(cat_
      !has(RUNNER, "safe_table_name("),
    "the three names that are only ever warehouse names are gated on quoting, not on a pattern")
 
-# The same warehouse as the study run, by its names. An environment that
-# carried that run used to stop short of the fill, because this wanted the
-# same facts under names of its own.
+# The same warehouse as the study run, by its names, so an environment that
+# carried that run carries the fill too.
 local({
   env <- runner_env(tempdir())
   vars <- c("PROJECT_WORK_SCHEMA", "WORK_SCHEMA", "DOMINO_USER_NAME",
@@ -2465,7 +2460,7 @@ local({
   whole <- function(s) all(vapply(CLS5$column_id, function(c)
     length(unique(s$SUPPRESSED[s$COLUMN_ID == c])) == 1L, logical(1)))
 
-  # The reviewer's table: 320 patients in five classes, 10 events in the first.
+  # A table of 320 patients in five classes, 10 events in the first.
   s <- suppress_cells(curve_cells(c(50, 80, 70, 60, 60), c(10, 50, 40, 25, 35)),
                       25, list(columns = CLS5))
   r <- recover(s)
@@ -2527,7 +2522,7 @@ local({
 
   # One curve, however a shell spells it. Keyed on the raw text, a censored row
   # written differently from its events row was a curve of its own, closed
-  # apart again - and the reviewer's table gave its 10 events back.
+  # apart again - and the table above gave its 10 events back.
   kr <- function(stat, source, measure, filter, only = FALSE)
     curve_key(list(stat = stat, source = source, measure = measure,
                    filter = filter), only)
@@ -3695,6 +3690,38 @@ local({
   ok(is.list(sh12) && length(over) == 1L && length(over[[1]]$parts) == 9L &&
        all(lengths(over[[1]]$parts) == 2L),
      "nine categories printed as a class and written out load, as one split of nine parts with two columns each")
+  # ...and the same split whichever column of a pair comes first. The column a
+  # node is represented by is the first one met, so written out before the
+  # class, interleaved, or the total ahead of both in reverse, each part is
+  # still the same two columns.
+  parts12 <- function(cols) {
+    sh <- tryCatch(load_shells(write_shells(list(columns = c(BASE$columns[1:2], cols)))),
+                   error = function(e) conditionMessage(e))
+    if (!is.list(sh)) return(sh)
+    ids <- chr(sh$columns$column_id)
+    o <- Filter(function(z) identical(z$what, "that split") && any(ids[z$totals] == "O2"),
+                split_plan(sh)$splits)
+    if (length(o) != 1L) return(paste(length(o), "splits over O2"))
+    sort(vapply(o[[1]]$parts, function(p) paste(sort(ids[p]), collapse = "+"), ""))
+  }
+  k12 <- lines9[1:9]; p12 <- lines9[10:18]; o12 <- lines9[19]
+  want12 <- parts12(lines9)
+  got12 <- lapply(list(written_first = c(p12, k12, o12),
+                       interleaved   = c(rbind(p12, k12), o12),
+                       total_first   = c(o12, rev(p12), rev(k12))), parts12)
+  ok(length(want12) == 9L && all(want12 == paste0("K", 1:9, "+P", 1:9)) &&
+       all(vapply(got12, identical, logical(1), want12)),
+     paste0("...written out first, interleaved or total first, the same nine pairs (",
+            paste(names(got12)[!vapply(got12, identical, logical(1), want12)], collapse = ", "), ")"))
+  # The same holds for the fill: the line-1 triplet class and the line-1
+  # quadruplets-or-triplets written down to a line-1 triplet are one row, 45
+  # each, whichever of the two is printed first.
+  xa <- both10(c(pred(TR, "1"), ""), c("ACD38_QUAD|ACD38_TRIP", "ACD38_TRIP"))
+  xb <- both10(c("", pred(TR, "1")), c("ACD38_TRIP", "ACD38_QUAD|ACD38_TRIP"))
+  na <- as.numeric(c(xa$N[xa$COLUMN_ID == "S1"], xa$N[xa$COLUMN_ID == "S2"]))
+  nb <- as.numeric(c(xb$N[xb$COLUMN_ID == "S2"], xb$N[xb$COLUMN_ID == "S1"]))
+  ok(length(na) == 2L && all(na == 45) && identical(nb, na) && all(xb$FILLED == 1L),
+     "...and the fill prints 45 for both, the written-out column first or the class first")
 })
 
 # Warehouse mode reads through the STUDY PACKAGE's db_q(), which retries through
@@ -3760,7 +3787,7 @@ local({
        has(sent(), "`hive_metastore`.`usr00000`."),
      "...having asked once, for the table under the run's own prefix and schema")
 
-  # The defect, reproduced, so this block can tell the two apart: the same
+  # The failure, reproduced, so this block can tell the two apart: the same
   # package sourced the same way, the config never registered.
   bare  <- new.env(parent = globalenv())
   quietly(for (f in c("config_223926.R", "db_utils_223926.R"))

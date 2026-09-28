@@ -12,7 +12,7 @@
 # Reads only. The traces land in out/: foldin_trace.md, and the same rows as
 # foldin_trace_lines.csv, foldin_trace_episodes.csv, foldin_trace_summary.csv.
 #
-# The study team asked to look at patients the fold-in rule touched - a drug of
+# Lists the patients the fold-in rule touched - a drug of
 # the immediately previous line that came back after exactly one other agent
 # opened a line, and joined that line's regimen instead of ending it - with
 # their raw MAP episodes beside the final lines. Not a check: nothing here
@@ -184,7 +184,7 @@ main <- function() {
 
   # Without the rule there is nothing to trace: the signature this reads
   # cannot occur in a build that did not fold, and a query that found rows in
-  # one would be reporting a defect, which is C1's job.
+  # one would be reporting an error, which is C1's job.
   if (!isTRUE(p$foldin))
     stop("Run ", run_id, " did not apply the fold-in (apply_map_foldin is not ",
          "TRUE in its CONTRACT_SETTINGS), so there is nothing to trace.",
@@ -202,13 +202,13 @@ main <- function() {
   fmt <- function(x) format(x, scientific = FALSE, trim = TRUE)
   cat("  ", nrow(cands), " fold(s) over ", n_cand_patients, " patient(s), in a table of ",
       fmt(totals$N_PATIENTS[1]), " patients and ", fmt(totals$N_LINES[1]), " lines\n", sep = "")
-  # The signature on a line a transplant or CAR-T opened is a defect, not the
+  # The signature on a line a transplant or CAR-T opened is an error, not the
   # rule (R/foldin_trace.R, foldin_trace_sql). It is traced like the rest so
   # the reader sees it, and said here so it is not read as the rule at work.
   n_odd <- sum(!is.na(cands$LOT_START_TYPE) & as.character(cands$LOT_START_TYPE) != "MED")
   if (n_odd > 0L)
     cat("  ", n_odd, " of them sit on a line a transplant or CAR-T opened: 4.8 ",
-        "refuses a fold there, so these are build defects to raise, not folds\n", sep = "")
+        "refuses a fold there, so these are build errors to raise, not folds\n", sep = "")
 
   summary <- foldin_trace_summary(cands, totals$N_PATIENTS[1], totals$N_LINES[1])
 

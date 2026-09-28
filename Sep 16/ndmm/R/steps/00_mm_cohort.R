@@ -224,12 +224,11 @@ build_ndmm_demographics <- function(con, member_elig_tbl, dod_tbl) {
 # The base population: each patient's EARLIEST qualifying diagnosis, and then
 # age >= 18 in that date's calendar year.
 #
-# That order is the whole point. The other way round - age
-# filtered first, earliest date chosen from what survived. A patient qualifying
-# at 17 and again at 18 was then kept, with MM_DX_DT moved to the later date.
-# Two things are wrong with that. It is not what the overall package does -
-# there age drops the patient and never moves the date - and two packages that
-# disagree on who is in the cohort is worse than one being stricter. And MM_DX_DT is not a demographic here - it gates the 1L index, via
+# That order is the whole point. The other way round - age filtered first,
+# earliest date chosen from what survived - would keep a patient qualifying at
+# 17 and again at 18, with MM_DX_DT moved to the later date. Age drops the
+# patient and never moves the date, because MM_DX_DT is not a demographic
+# here - it gates the 1L index, via
 # "first MM therapy claim on or after MM_DX_DT". Advancing it to the second
 # qualifying date lets a later therapy claim be recorded as first line for a
 # patient whose real first line was at 17. "Newly diagnosed" is the earliest

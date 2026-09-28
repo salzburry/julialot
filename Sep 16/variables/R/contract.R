@@ -1,11 +1,11 @@
-# What this package writes, as data a sibling delivery can read.
+# What this package writes, as data a sibling folder can read.
 #
 # TFLS fills the requested shells from a finished run, and it does that where
 # this package is often NOT installed - from a snapshot on a machine that has
 # the CSVs and nothing else. So it has to know which module writes which table,
 # which of them the release module publishes a suppressed copy of, and which
-# are written only when a switch asks for them. It used to know by restating
-# all three lists by hand, and a hand-written restatement drifts: a table added
+# are written only when a switch asks for them. The three lists are not
+# restated by hand, because a hand-written restatement drifts: a table added
 # to SUPPRESSION_SPEC and not added there would be filled from with the
 # recoverability gate not knowing to refuse it.
 #

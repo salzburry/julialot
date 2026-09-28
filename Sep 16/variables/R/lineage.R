@@ -4,9 +4,8 @@
 # before anything is read. A run that failed part-way, was built over a
 # different cohort, or deviated from the LOT contract is refused.
 #
-# The LOT rules have changed more than once, and numbers built before the last
-# change are superseded, so a run older than that is refused by date as well as
-# by status. The date is `lot_rules_epoch` (config_223926.R), a setting rather
+# Numbers built before the LOT rules last changed are superseded, so a run
+# older than that is refused by date as well as by status. The date is `lot_rules_epoch` (config_223926.R), a setting rather
 # than a constant here: it moves whenever the engine's rules do.
 #
 # The date says WHEN a run executed, not WHAT executed. LOT_CODE_MD5 is the
@@ -316,7 +315,7 @@ check_lot_lineage <- function(con, cfg) {
   # own date was built by the older engine and one finished later was not, and
   # a date cannot tell them apart. The guard refuses what it cannot place,
   # which costs a rebuild on one day and is the direction that does not read a
-  # superseded number in silence. A delivery that needs that day back names a
+  # superseded number in silence. A study that needs that day back names a
   # different floor.
   epoch <- as.Date(cfg$lot_rules_epoch)
   if (!is.na(upd) && upd <= epoch)
@@ -525,7 +524,7 @@ check_cohort_index_exclusions <- function(con, cfg, cohort_run_id = "") {
          "different cohort. It recorded NDMM_INDEX_EXCLUDED_ABBRS as '",
          paste(recorded, collapse = ","), "'.\nRe-run the cohort build with ",
          "NDMM_INDEX_EXCLUDED_ABBRS naming them, or set COHORT_INDEX_EXCLUSIONS ",
-         "to what the study team agreed.", call. = FALSE)
+         "to the agents the study bars.", call. = FALSE)
   log_msg("  cohort build barred from the 1L index: ",
           if (length(barred)) paste(barred, collapse = ", ")
           else "nothing the code list could set one with")
@@ -543,9 +542,8 @@ like_matches <- function(pattern, x) {
 
 # What the cohort build actually applied.
 #
-# Eight of this package's settings are the cohort build's rules, and the two
-# defaults disagree today: this package reads s7.1's body (01 Jan 2018) and the
-# cohort build reads Figures 1 and 2 (01 Jan 2016), which is Q1.
+# Eight of this package's settings are the cohort build's rules, and both
+# packages default the study start to s7.1's body, 01 Jan 2018 (Q1).
 # NDMM_RUN_METADATA.CONTRACT_SETTINGS is that build's whole CONTRACT as
 # `k=v|k=v`, so the study's metadata records what shaped the data rather than
 # what this run was told.

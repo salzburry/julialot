@@ -146,8 +146,7 @@ withhold_cell <- function(cells, i, floor_n, reason) {
 #                    Neuropathy No.
 #   against the N    the levels of a variable in one column and one section sum
 #                    to the column's own denominator, which is printed in the
-#                    column header. This is the relation this file has always
-#                    applied, and it is kept as one relation among the rest.
+#                    column header.
 #
 # Only counts of patients take part. A median, a rate, a curve and a count of
 # distinct values do not sum to a total, so hiding a second one of them
@@ -797,7 +796,7 @@ relations_down_column <- function(cells, ok) {
 # Every statistic takes part, not only the counts. A printed cell carries its
 # population in DENOM whatever it prints, and populations add up across a split
 # - Overall's mean age and one subgroup's give away the other subgroup's size
-# between them, and the old rule, which read counts alone, never saw that.
+# between them, which a rule reading counts alone would never see.
 #
 # In one table a row is matched by where it sits. Between tables it is matched by
 # what it reads - statistic, source, measure and filter - because T5c's rwTTNT
@@ -978,8 +977,7 @@ relations_partition <- function(cells, ok, shell) {
 # printed in the column header - so the levels alone are the relation.
 #
 # Two of them, where the section is nested. Every count cell of the section is
-# the group this file has always taken, kept so that nothing it used to
-# withhold is published now. The outdented rows of the section are the levels
+# one group. The outdented rows of the section are the levels
 # the denominator is really split into - "<75 years" and "at least 75 years",
 # not the three bands inside the first - and that is the sum a cell outside a
 # subtotal can be read off.
@@ -1296,7 +1294,7 @@ close_relations <- function(cells, relations, floor_n, units = list(),
 # `shell` is the shell definition the cells were filled from, for the columns
 # a row is totalled across. It is optional: without it the sums down a column
 # and against the column's denominator are still read off the frame itself, so
-# a caller that does not pass it withholds everything it used to and more.
+# a caller that does not pass it withholds at least as much.
 suppress_cells <- function(cells, floor_n, shell = NULL) {
   if (is.null(cells) || !nrow(cells)) return(cells)
   if (!"SUPPRESSED" %in% names(cells)) cells$SUPPRESSED <- 0L

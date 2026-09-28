@@ -143,7 +143,7 @@ build_ndmm_med_claim_header_and_confinement <- function(con, medical_tbl,
     -- has max(POS) = 81, so classifying from the maxima alone reads it as
     -- outpatient. One inpatient other-cancer claim excludes on its own, while
     -- an outpatient one needs a second within 30 days - so that patient stayed
-    -- in the cohort. 00_mm_cohort.R has always done this; this view did not.
+    -- in the cohort. 00_mm_cohort.R does the same.
     SELECT PATID, PAT_PLANID, CLMID, FST_DT, LOC_CD,
            max(CONF_ID) AS CONF_ID,
            max(POS)     AS POS,

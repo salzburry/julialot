@@ -75,7 +75,7 @@ mod_cohorts <- function(con, cfg, cohort) {
   #                       claim on the index date, so this excludes nobody.
   #   claim_after_index - a claim strictly after the index, which is what the
   #                       wording is probably reaching for.
-  #   enrolled_on_index - the June 2026 rule the current build implements.
+  #   enrolled_on_index - enrolled on the index date itself.
   # ../OPEN_QUESTIONS.md Q5.
   fu_pred <- switch(cfg$fu_evidence_rule,
     claim_from_index  = "1 = 1",

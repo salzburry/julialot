@@ -8,7 +8,7 @@ made it bite.
 
 So this runs them. It cannot run Spark, so it transpiles each check to DuckDB
 with sqlglot and executes it against a tiny fixture - once clean, where the
-check must count nothing, and once with the defect that check describes, where
+check must count nothing, and once with the error that check describes, where
 it must count that.
 
 The transpile is a compromise: DuckDB is not Spark, and a statement Spark would
@@ -23,9 +23,8 @@ cases.json: {"tables": {name: {"columns": {...}}, ...},
 
 A check reads several tables - a line against the cohort it came from, a
 regimen against the episodes behind it - so the fixture is a set of them, and
-a case supplies rows for whichever ones its defect lives in. The "planted" key
-and the n_planted column are those rows, under the name the harness has always
-used for them.
+a case supplies rows for whichever ones its error lives in. The "planted" key
+and the n_planted column are those rows.
 Prints one TSV line per case: id, n_clean, n_planted, detail, error.
 """
 import json, sys

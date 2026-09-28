@@ -1,5 +1,5 @@
 #!/usr/bin/env Rscript
-# Render the returning-drug trace on the six fixture patients, so the shape
+# Render the returning-drug trace on the fixture patients, so the shape
 # of what trace_returns.R writes can be read before a run against the
 # warehouse - one patient per kind of return, with the paragraph and the
 # episode table each gets.

@@ -279,7 +279,7 @@ foldin_count_ctes <- function(cfg, discon_days, n_start = NULL, n_tbl = NULL,
             FROM foldin_runs) q
     ),
     -- Every episode beside the agent's PREVIOUS one. That pair is the
-    -- request's two doses, and the interval between them is what the count
+    -- rule's two doses, and the interval between them is what the count
     -- reads - dose to dose, not stop to return.
     --
     -- MAP_MED_TYPE is the tiebreak in all three windows above, and it is not
@@ -294,7 +294,7 @@ foldin_count_ctes <- function(cfg, discon_days, n_start = NULL, n_tbl = NULL,
                                                 c.MAP_MED_TYPE) AS PREV_COURSE_DT
       FROM foldin_course c
     ),
-    -- The AGENT that opened each line. The request counts two or more
+    -- The AGENT that opened each line. The rule counts two or more
     -- different AGENTS, not lines, so a line is read through the drug that
     -- started it: the non-steroid medication dosed on its start date. One
     -- agent that opens a line, discontinues, and opens another on a released
@@ -345,7 +345,7 @@ foldin_count_ctes <- function(cfg, discon_days, n_start = NULL, n_tbl = NULL,
     -- and whether a transplant opened one there too. A LEFT JOIN and a count,
     -- not a correlated subquery: the translation has to survive Spark and the
     -- harness alike. count(DISTINCT) rather than count(): the joins beside it
-    -- multiply rows, and distinct is what the request asks for anyway.
+    -- multiply rows, and distinct agents are what the rule counts anyway.
     foldin_counted AS (
       SELECT k.PATID, k.AGENT, k.COURSE_START_DT, k.MAP_START_DT,
              count(DISTINCT fo.OPENER) AS N_ADVANCES,
@@ -361,7 +361,7 @@ foldin_count_ctes <- function(cfg, discon_days, n_start = NULL, n_tbl = NULL,
        AND tx.OPEN_DT <  k.MAP_START_DT{between_join}
       -- EVERY episode after the drug's first is judged, and each is a return:
       -- a new episode opens only for a claim beyond every run-out (2.3). NOT
-      -- restricted to episodes after a discon_days gap - the request's own
+      -- restricted to episodes after a discon_days gap - the rule's own
       -- worked case is a 60-day break, shorter than the 90-day
       -- discontinuation, and scenario S01 is that case.
       WHERE k.PREV_COURSE_DT IS NOT NULL

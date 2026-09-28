@@ -142,9 +142,9 @@ server <- function(input, output, session) {
   output$scn_readings <- renderUI({
     s <- scn()
     # The readings are optional; the two notices below are not. Built
-    # separately, because a scenario with no readings used to return here and
-    # take the release verdict with it - so a run could have its tables
-    # refused with nothing on the page saying why.
+    # separately, so a scenario with no readings still shows the release
+    # verdict and a run never has its tables refused with nothing on the page
+    # saying why.
     bits <- if (!length(s$readings)) character(0) else {
       keys <- if (length(SCENARIO_DIFFS)) SCENARIO_DIFFS else names(s$readings)
       vapply(intersect(keys, names(s$readings)), function(k)
@@ -380,7 +380,7 @@ server <- function(input, output, session) {
 
   # The requested table shells, filled from this scenario.
   #
-  # The shells and the code that fills them are a sibling delivery, loaded on
+  # The shells and the code that fills them are a sibling folder, loaded on
   # first use by R/tfls.R. Where that folder is not there the panel says so and
   # every other tab is unaffected.
   #

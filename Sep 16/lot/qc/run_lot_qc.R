@@ -108,7 +108,7 @@ main <- function() {
             # The allogeneic and CAR-T events, for the one thing the ownership
             # checks need them for: the build stops reading a line's AUTOs at
             # the first of these, so a check on unowned AUTOs must stop there
-            # too or it reports the censor as a defect.
+            # too or it reports the censor as an error.
             allo      = lot_out("TX_ALLO_CART_DATES"),
             # Which drugs are one agent. C1 has to answer that the way the
             # engine does - a substitute and the drug it replaces are one
@@ -170,7 +170,7 @@ main <- function() {
   if (nzchar(devs)) cat("  NOT A CONTRACT BUILD: ", devs, "\n", sep = "")
 
   # A table this version reads that the run did not write is a version
-  # difference, not a defect. Its checks are skipped by name.
+  # difference, not an error. Its checks are skipped by name.
   have <- vapply(t, function(x)
     isTRUE(tryCatch({ db_q(con, paste0("SELECT 1 FROM ", x, " LIMIT 1")); TRUE },
                     error = function(e) FALSE)), logical(1))

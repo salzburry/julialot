@@ -7,9 +7,8 @@ DASH  <- strrep("-", 70)
 #
 # One file per run, and everything the run says goes in it: its log lines, the
 # QC and diagnostic tables it print()s, and its warnings, messages and the
-# error that stops it. Each of the last three used to reach the console only,
-# so the log of a failed run ended mid-step with no reason, and a QC heading
-# had nothing under it.
+# error that stops it, so the log of a failed run ends on its reason and a QC
+# heading has its table under it.
 #
 # Where it goes, the first of these that can be written to:
 #   1. PIPELINE_LOG_FILE - an exact path, so several stages can share one file.
@@ -21,8 +20,8 @@ DASH  <- strrep("-", 70)
 #   4. R's temporary folder - said LOUDLY, because R deletes it when the
 #      process exits, and a log that is gone by the time anyone looks is a log
 #      nobody was told they did not have.
-# The process id is in the name because two runs starting in the same second
-# used to append to one file. Times are the container's local clock, and the
+# The process id is in the name so that two runs starting in the same second
+# never append to one file. Times are the run's local clock, and the
 # announcement names its zone.
 
 .run_log <- new.env(parent = emptyenv())

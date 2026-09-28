@@ -210,8 +210,8 @@ publish_outputs <- function(stage, out_dir, run_id) {
   # Deleting the old output and then moving the new one in is two operations
   # that each succeed for some files and fail for others. Four of five deletes
   # succeeding and the fifth failing destroys four published tables and then
-  # stops - and the message this used to print, that nothing published had
-  # changed, was false exactly when it mattered. The same is true of the move:
+  # stops, and a message that nothing published had changed would be false
+  # exactly when it mattered. The same is true of the move:
   # four in and one not leaves a directory that is half of one run and half of
   # another, with nothing on either half saying so.
   #

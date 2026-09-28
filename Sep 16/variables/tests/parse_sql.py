@@ -4,7 +4,7 @@
 Reads a file of `-- @@STMT <tag>` delimited statements on stdin or argv[1] and
 exits non-zero listing anything that does not parse. Spark's own parser is the
 authority; sqlglot is the closest thing available without a cluster, and it
-catches the class of defect that shipped: a statement chopped in half, a CTE
+catches the class of error that matters here: a statement chopped in half, a CTE
 list with a comma missing, an unsubstituted placeholder.
 """
 import sys

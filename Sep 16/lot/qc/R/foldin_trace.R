@@ -1,6 +1,6 @@
 # The fold-in trace, as functions.
 #
-# The study team asked to see the fold-in rule (LOT_RULES.md 4.8) on real
+# Shows the fold-in rule (LOT_RULES.md 4.8) on real
 # patients: their raw MAP episodes beside the final lines, so a reader can
 # check that a drug which came back after one other agent opened a line was
 # put where the rule says. Kept apart from the runner (trace_foldin.R) so
@@ -120,7 +120,7 @@ foldin_trace_in_list <- function(patids)
 # transplant or CAR-T opened is not the rule's doing: 4.8 refuses a fold across
 # a procedure that opened a line, and the engine's foldin_tx_opened counts the
 # line's own start (engine/R/foldin_rule.R, this_tx). Such a row is a build
-# defect that C1 would accept, so the narrative and the summary say so rather
+# error that C1 would accept, so the narrative and the summary say so rather
 # than read it as 4.8.
 foldin_trace_sql <- function(t, p) {
   .need_checks()
@@ -200,8 +200,8 @@ foldin_trace_lines_sql <- function(t, patids, p) {
     ORDER BY PATID, LOT_NUM")
 }
 
-# The raw episodes, every class, steroids included: they are what the study
-# team asked to see. What is NOT read is MED_ABBR - the persisted table's drug
+# The raw episodes, every class, steroids included: they are what the trace
+# shows. What is NOT read is MED_ABBR - the persisted table's drug
 # column is MAP_MED_TYPE, and MAP_MED_ABBR exists only in a test fixture.
 foldin_trace_episodes_sql <- function(t, patids) paste0("
     SELECT cast(PATID as string) AS PATID, MAP_START_DT, MAP_END_DT,
@@ -220,7 +220,7 @@ foldin_trace_tx_sql <- function(t, patids) {
 
 # The same read as two single-table queries, each column explicitly typed.
 #
-# The union above is what the offline harness and the tests run, and it is the
+# The union above is what the tests run, and it is the
 # clearer statement of the question. Against the warehouse it is read one table
 # at a time instead, because the ODBC driver segfaulted on the union - and took
 # the whole R process with it, which no tryCatch can catch. The union's second
@@ -303,7 +303,7 @@ foldin_trace_sample <- function(cands, n, patids = NULL) {
 #
 # A signature row on a line a transplant or CAR-T opened is not a fold (see
 # foldin_trace_sql), so it is kept out of the fold counts and counted on a
-# row of its own, where a non-zero is a defect to raise. A candidates frame
+# row of its own, where a non-zero is an error to raise. A candidates frame
 # without LOT_START_TYPE is read as all MED lines.
 foldin_trace_summary <- function(cands, n_patients_total, n_lines_total) {
   cnt <- function(d) c(n_patients = length(unique(d$PATID)),
@@ -327,7 +327,7 @@ foldin_trace_summary <- function(cands, n_patients_total, n_lines_total) {
                   c(n_patients = as.numeric(n_patients_total),
                     n_lines = as.numeric(n_lines_total), n_pairs = NA_real_)),
               row("folds", "all", cnt(d)),
-              row("signature on a non-MED line (build defect, not 4.8)", "all", cnt(odd)))
+              row("signature on a non-MED line (build error, not 4.8)", "all", cnt(odd)))
   for (k in sort(unique(d$LOT_NUM)))
     out[[length(out) + 1L]] <- row("by LOT_NUM", paste0("LOT", k), cnt(d[d$LOT_NUM == k, , drop = FALSE]))
   for (m in sort(unique(d$MED_ABBR)))
@@ -440,7 +440,7 @@ foldin_trace_annotate <- function(lines, episodes, tx, folds, p, subs = NULL) {
       ep$note[i] <- if (identical(l$LOT_START_TYPE, "MED"))
         paste0("FOLDED into LOT ", l$LOT_NUM, " (4.8)")
       else paste0("signature on LOT ", l$LOT_NUM, ", a ", l$LOT_START_TYPE,
-                  " line: not a 4.8 fold, raise as a build defect")
+                  " line: not a 4.8 fold, raise as a build error")
     else if (identical(l$LOT_START_TYPE, "MED") && l$LOT_START_DT == d && !prev_had)
       ep$note[i] <- paste0("opens LOT ", l$LOT_NUM)
     else if (d <= l$ELIGIBLE_END)
@@ -455,9 +455,8 @@ foldin_trace_annotate <- function(lines, episodes, tx, folds, p, subs = NULL) {
 # ---- The narrative -------------------------------------------------------------
 # One paragraph per folded (line, drug), in plain sentences: where the drug
 # was, what opened the line it returned in, when it came back, and what the
-# reading before 4.8 would have done with it. The study team asked to see that
-# these patients are classified as the rule says, which needs the alternative
-# stated.
+# reading without 4.8 would have done with it. Showing that these patients are
+# classified as the rule says needs the alternative stated.
 #
 # The pre-rule outcome is not one sentence, because the engine has three
 # readings of an agent arriving outside the window, and which one applies turns
@@ -484,7 +483,7 @@ foldin_trace_annotate <- function(lines, episodes, tx, folds, p, subs = NULL) {
 # the read shows no own episode the paragraph says so and hedges.
 #
 # A line a transplant or CAR-T opened gets no such paragraph: 4.8 refuses the
-# fold there, so the signature is a defect and the paragraph says that.
+# fold there, so the signature is an error and the paragraph says that.
 #
 # The reading is local, so a boundary is stated once per patient. It asks what
 # the engine would have made of this return in the line as built, which holds
@@ -544,7 +543,7 @@ foldin_trace_narrative <- function(fold_row, lines, episodes, p, tx = NULL, subs
       "4.8 refuses a fold across a procedure that opened a line, so this drug ",
       "should not have reached LOT ", n, "'s regimen by the fold: the row carries ",
       "the fold's signature but is not the rule's doing and should be raised as a ",
-      "build defect (check C1 accepts this route and will not flag it)."))
+      "build error (check C1 accepts this route and will not flag it)."))
   }
 
   # What opened the line: the non-steroid drugs dosed on the start date that
@@ -736,7 +735,7 @@ foldin_trace_markdown <- function(run_id, pfx, p, summary, patients_sections, ma
                  "window and an episode inside line n after it. That is the route ",
                  "check C1 accepts, and nothing else produces it. On a line a ",
                  "transplant or CAR-T opened the same signature is not a fold, since ",
-                 "4.8 refuses one there; such rows are counted apart as a build defect."),
+                 "4.8 refuses one there; such rows are counted apart as a build error."),
           "",
           paste0("Each section also says what the reading before the rule would ",
                  "have made of the return. That is a local reading of these tables ",

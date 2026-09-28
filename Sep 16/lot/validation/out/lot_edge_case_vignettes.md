@@ -172,7 +172,7 @@ reading of how the rules interact, and the first warehouse run settles it.
 **melp_confirmed_beats_the_fold** - A confirmed melphalan course that is also a returning drug
 
 - timeline: d+0 MED (1L starts on drug A and melphalan); d+200 MED (drug C starts and advances the line to 2L); d+300 MED (melphalan returns for 28 days, outside 2L's window); d+305 MED (a different line-defining agent starts, inside that cover)
-- why it is hard: Two adopted rules reach for the same course. 4.7 says a confirmed short course opens the next line on its own first day; 4.8 says a previous line's drug coming back joins the line it returns in. Both cannot hold, and the study team's words settle it - the new line starts when the melphalan appears. 4.8 stands back. Without that, 2L named a drug whose only episode began after 2L had ended, and its end date and reason moved with it.
+- why it is hard: Two adopted rules reach for the same course. 4.7 says a confirmed short course opens the next line on its own first day; 4.8 says a previous line's drug coming back joins the line it returns in. Both cannot hold, and the rule's own words settle it - the new line starts when the melphalan appears. 4.8 stands back. Without that, 2L named a drug whose only episode began after 2L had ended, and its end date and reason moved with it.
 - rule: lot/engine/R/foldin_rule.R | OR EXISTS (SELECT 1 FROM melp_inject mi
 
 **returning_drug_one_advance** - A drug returns after one advance
@@ -184,13 +184,13 @@ reading of how the rules interact, and the first warehouse run settles it.
 **returning_drug_two_advances** - A drug returns after two advances
 
 - timeline: d+0 MED (1L starts on drug A and drug B); d+200 MED (drug C advances the line to 2L); d+300 MED (drug D advances it again, to 3L); d+450 MED (drug B comes back, during 3L)
-- why it is hard: The outcome the study team's note describes for two advances, reached by the scope rather than by the count. Scoped to the previous line the count cannot reach two, so this pins the ANSWER the 'two or more' clause gives and not the clause itself - which is unreachable, and said to be so in the rules and the contract.
+- why it is hard: The outcome the rule describes for two advances, reached by the scope rather than by the count. Scoped to the previous line the count cannot reach two, so this pins the ANSWER the 'two or more' clause gives and not the clause itself - which is unreachable, and said to be so in the rules and the contract.
 - rule: lot/engine/R/foldin_rule.R | N_ADVANCES
 
 **returning_drug_two_agents_one_line** - Two drugs start one line while a drug is away
 
 - timeline: d+0 MED (1L starts on drug A and drug B); d+200 MED (drugs C and D start together and advance the line to 2L); d+450 MED (drug B comes back, during 2L)
-- why it is hard: The request counts agents advancing the line twice or more. Counting each drug that opened a line made a doublet two advances and refused a fold it should take.
+- why it is hard: The rule counts agents advancing the line twice or more. Counting each drug that opened a line made a doublet two advances and refused a fold it should take.
 - rule: lot/engine/R/foldin_rule.R | foldin_openers
 
 **returning_drug_second_return_across_transplant** - A folded drug returns again, in a line a transplant opened
@@ -238,7 +238,7 @@ reading of how the rules interact, and the first warehouse run settles it.
 **returning_drug_two_lines_back** - A drug from further back than the previous line is simply new
 
 - timeline: d+0 MED (1L starts on drug A and drug B); d+200 MED (drug C starts and advances the line to 2L); d+400 MED (drug D starts and advances the line to 3L); d+600 MED (drug B comes back, during 3L)
-- why it is hard: The fold set is the IMMEDIATELY previous line's regimen and no further. Widening it is the one change that would make the rule's two-or-more clause reachable, and it is a change to the rule the study team settled, not a detail of how it is measured.
+- why it is hard: The fold set is the IMMEDIATELY previous line's regimen and no further. Widening it is the one change that would make the rule's two-or-more clause reachable, and it is a change to the settled rule, not a detail of how it is measured.
 - rule: lot/engine/R/foldin_rule.R | foldin_meds
 
 **returning_drug_same_day_as_the_transplant** - A dose on the transplant's own date is not that line's

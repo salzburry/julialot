@@ -38,7 +38,7 @@ RELEASE_NOT_RECORDED <- "nothing recorded - a build from before this column exis
 release_recoverable_blocks <- function(recoverable) {
   v <- trimws(as.character(recoverable %||% "")[1])
   # NA is not a value to interpolate into a refusal. as.character(NA) is
-  # NA_character_, nzchar() of which is TRUE, so an unnormalised NA used to
+  # NA_character_, nzchar() of which is TRUE, so an unnormalised NA would
   # fall through this function and come back out in the message.
   if (is.na(v) || !nzchar(v) || identical(toupper(v), "NA"))
     return(RELEASE_NOT_RECORDED)
@@ -67,7 +67,7 @@ release_recoverable_blocks <- function(recoverable) {
 #
 # The list is believed only where it IS one, and the test is membership, not
 # spelling. Every name has to be one of the tables that HAS a released copy -
-# the six of SUPPRESSION_SPEC - because this field is what narrows a refusal,
+# the tables of SUPPRESSION_SPEC - because this field is what narrows a refusal,
 # and a name matched on shape alone narrows it to nothing: a stale or hand-
 # edited "S_NOT_A_TABLE" is a perfectly well-formed name, and believing it
 # would refuse a table that does not exist while leaving the recoverable one

@@ -60,7 +60,7 @@ check_skip_wiring <- function(path = .suite_path) {
     return(skip_note(paste0("this suite's own source could not be located, ",
                             "so its skip wiring is unchecked")))
   # A path that names no file is different: the suite worked out where it lives
-  # and got it wrong, which is a defect in this file rather than a missing
+  # and got it wrong, which is an error in this file rather than a missing
   # capability. It returned quietly before, and two suites that resolved their
   # path AFTER a setwd() spent every run with this guard off - silently, and
   # under exactly the invocation the runbook documents.
@@ -83,11 +83,8 @@ check_skip_wiring <- function(path = .suite_path) {
 test_report_status <- function(pass, fail, skipped) {
   cat(sprintf("%d passed, %d failed, %d skipped\n", pass, fail, skipped))
   if (skipped > 0L) {
-    # What actually skipped, in its own words. This used to print the same
-    # sentence in every suite - "Install duckdb and sqlglot" - whatever the
-    # block had skipped for. On the dashboard suite that named the wrong
-    # remedy: the block wanted survival::, both of the named packages were
-    # already installed, and the reader was sent to reinstall them.
+    # What actually skipped, in its own words, so the remedy printed is the
+    # one each block asked for.
     cat("  ", skipped, " block(s) did not run, so this is NOT a clean run:\n", sep = "")
     for (r in skip_reasons) cat("    - ", r, "\n", sep = "")
     cat("  Fix those, or set ALLOW_SKIPPED_TESTS=TRUE to accept it.\n")
@@ -146,12 +143,12 @@ ok(length(VIGNETTES) >= 15,
 df <- render_vignettes(P)
 ok(nrow(df) == length(VIGNETTES) && !anyNA(df$expected),
    "...and every one renders an expected outcome")
-# The idea named these cases specifically. A catalogue that quietly drops one
+# These cases are named specifically. A catalogue that quietly drops one
 # is a catalogue that answers a different question.
 for (want in c("tandem", "cart_bridge", "biosimilar", "maintenance",
                "overlapping_oral_refills", "map_gap", "allo_after_failed_auto"))
   ok(any(grepl(want, df$id, fixed = TRUE)),
-     paste0("...including the '", want, "' case that was asked for"))
+     paste0("...including the '", want, "' case the catalogue must hold"))
 
 cat("\n-- it moves when a setting moves, which is the point --\n")
 # Hardcoding "day 181" is what makes a catalogue rot. Every offset is derived,

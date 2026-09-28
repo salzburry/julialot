@@ -13,7 +13,7 @@
 # the contract build names its value too rather than inheriting the shell.
 MELP_CELLS <- list(
   list(id = "reference", mode = "off", melp = "off",
-       what = "no melphalan rule - what the build did before the study adopted one"),
+       what = "no melphalan rule - the build without one"),
   list(id = "simplified", mode = NA_character_, melp = "simplified",
        what = paste0("the study's rule: a short melphalan course outside ",
                      "induction does not advance a line on its own; a new ",

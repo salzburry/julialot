@@ -460,8 +460,8 @@ ensure_cols <- function(con, tbl, spec) {
   invisible(TRUE)
 }
 
-# The attrition as a table, not only a log line. It is the deliverable here -
-# the request was the count and the funnel that reaches it.
+# The attrition as a table, not only a log line: the count and the funnel that
+# reaches it are what this build produces.
 write_attrition <- function(con, cfg, counts) {
   tbl <- wrk("NDMM_ATTRITION")
   cols <- names(ATTRITION_COLS)

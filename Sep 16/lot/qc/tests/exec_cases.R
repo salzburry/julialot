@@ -1,9 +1,9 @@
 # What each check is given to find, and what it must not find.
 #
-# One entry per check, each carrying exactly the defect its `what` describes.
-# The clean fixture must count 0 for every check and the defective one must
+# One entry per check, each carrying exactly the error its `what` describes.
+# The clean fixture must count 0 for every check and the faulty one must
 # count more than 0 for its own; a check that cannot tell them apart reports
-# "pass" on a real defect.
+# "pass" on a real error.
 #
 # The clean fixture is one patient with two lines and has to satisfy all
 # forty checks at once: the funnel reconciles with the published table,
@@ -84,7 +84,7 @@ CLEAN_FIXTURE <- list(
   subs = list()
 )
 
-# The defective row is the clean one with the defect in it, under a patient id
+# The faulty row is the clean one with the error in it, under a patient id
 # of its own so it cannot disturb the clean patient's reconciliation.
 .f <- function(base, ...) utils::modifyList(
   utils::modifyList(base, list(PATID = "P000009")), list(...))
@@ -108,7 +108,7 @@ EXEC_CASES <- list(
             planted = list(final = list(.f(FINAL_1, LOT_MED_CNT = 7L)))),
   A7 = list(what = "a medication-started line with no regimen",
             planted = list(final = list(.f(FINAL_1, LOT_BASE_MEDS = "", LOT_MED_CNT = 0L)))),
-  # Both on LOT_NUM 2, so 4.6's own defect is what the row carries and A4 -
+  # Both on LOT_NUM 2, so 4.6's own error is what the row carries and A4 -
   # line 1 is medication-started - is not tripped alongside it. A8's row keeps
   # the regimen and A9's drops it, so each case is the one thing its check
   # asks about and neither leans on the other having fired.

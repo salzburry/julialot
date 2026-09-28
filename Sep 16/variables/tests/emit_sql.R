@@ -177,12 +177,9 @@ capture_emitted_sql <- function(here = ".", cfg_edit = identity,
   note <- function(what, e)
     errors[[what]] <<- conditionMessage(e)
 
-  # The runner's OWN pre-module path, called rather than re-implemented. This
-  # harness used to list the builders by hand and call build_fu_claims()
-  # directly - which is the one branch of that if/else that works - so the
-  # branch the shipped default takes was never emitted, and the statement it
-  # emitted could not run on Spark at all. A harness that paraphrases the code
-  # it is testing tests the paraphrase.
+  # The runner's OWN pre-module path, called rather than re-implemented, so
+  # the branch the shipped default takes is the one emitted. A harness that
+  # paraphrases the code it is testing tests the paraphrase.
   tryCatch(env$build_inputs(NULL, cfg, mods),
            error = function(e) note("build_inputs", e))
 

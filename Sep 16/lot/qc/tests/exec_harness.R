@@ -5,7 +5,7 @@
 # check lost the half of its condition that made it bite.
 #
 # So each check here is executed twice: against a clean fixture, where it must
-# count nothing, and against the same fixture carrying the defect it describes,
+# count nothing, and against the same fixture carrying the error it describes,
 # where it must count that and name it.
 #
 # The checks are written for Spark and transpiled to DuckDB to run at all, so a

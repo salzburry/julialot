@@ -1,10 +1,9 @@
 # The returning-drug trace, as functions: "drugs that come back", read off a
 # finished run's published tables.
 #
-# The study team asked to see, on live patients, what the rules adopted on
-# 30 Aug 2026 (LOT_RULES.md 4.3 and 4.8) do with a drug that comes back -
-# and, for the 2L question, which returns now stay inside a line that the
-# earlier reading would have split. The engine keeps no flag for any of it, so
+# Shows, on live patients, what the returning-drug rules (LOT_RULES.md 4.3
+# and 4.8) do with a drug that comes back - and, for the 2L question, which
+# returns stay inside a line that the reading without them would have split. The engine keeps no flag for any of it, so
 # every kind here is recognised by its signature in LOT_LONG_FINAL and
 # MAP_STACKED, the way the fold-in trace (R/foldin_trace.R) recognises a fold.
 # That file is reused for the fold itself; this one adds the other shapes and
@@ -640,10 +639,10 @@ return_trace_annotate <- function(lines, episodes, tx, cands, p, subs = NULL) {
 # ---- The narratives ----------------------------------------------------------------
 # One paragraph per candidate row. A fold's is the fold-in trace's own. An own
 # return's says where the drug was, the break, the return, what the line did,
-# and what the reading before 30 Aug 2026 would have done - the same local
+# and what the reading without 4.3 and 4.8 would have done - the same local
 # reading the fold narrative makes, stated for the patient's earliest return
 # only (the caveat foldin_trace_narrative explains). An opens_line row's says
-# why the return opened a line and that the rule changed nothing there.
+# why the return opened a line and that the rule changes nothing there.
 # What the line's own regimen covered before the return, as the engine chained
 # it: the regimen drugs the window admitted, and - since 4.4 makes a pair one
 # agent and the older engine's chain read the substitute's episodes as the
@@ -753,7 +752,7 @@ return_trace_narrative <- function(row, lines, episodes, p, tx = NULL, subs = NU
     # rules: 4.3 keeping the line's own drug in its line, and 4.7 suppressing a
     # short course and carrying the line to its cover. The published tables
     # record neither rule, so crediting 4.3 here would name a rule that may not
-    # have acted - and 4.7 held long before 30 Aug 2026, so the pre-rule
+    # have acted - and 4.7 holds with or without 4.3 and 4.8, so the pre-rule
     # reading does not follow from it either. Only where the run applied the
     # melphalan rule: with it off, 4.3 is the only candidate and the ordinary
     # paragraph is right.
@@ -774,13 +773,13 @@ return_trace_narrative <- function(row, lines, episodes, p, tx = NULL, subs = NU
              "), so under that reading the return would have sat in no line at all.")
       else ""
     pre <- if (!is.na(first_ret) && ret > first_ret) {
-      paste0("Before 30 Aug 2026 this return cannot be read from these tables alone: an ",
+      paste0("Without 4.3 and 4.8 this return cannot be read from these tables alone: an ",
              "earlier return on ", format(first_ret), " is the first thing the rules decided ",
              "for this patient, and the line holding this one depends on what the older reading ",
              "would have made of that. A build of the same cohort with APPLY_OWN_RETURN_FOLD=FALSE ",
              "and APPLY_MAP_FOLDIN=FALSE, differenced against this one, is what settles it.")
     } else if (!is.null(proc)) {
-      paste0("Before 30 Aug 2026 the break released the drug, and the return would not have ",
+      paste0("Without 4.3 and 4.8 the break released the drug, and the return would not have ",
              "stayed in LOT ", n, ". What it would have opened cannot be read from these tables ",
              "alone: a ", proc$type, " on ", format(proc$dt), " falls between the break and the ",
              "return, and under that reading a procedure opens a line of its own first, so the ",
@@ -793,7 +792,7 @@ return_trace_narrative <- function(row, lines, episodes, p, tx = NULL, subs = NU
       # infusion rather than the day before the addition
       # (engine/R/steps/06_lot1_end.R). So releasing the drug moves which
       # addition that branch reads and changes nothing it produces.
-      paste0("Before 30 Aug 2026 the break released the drug, and the return would have been ",
+      paste0("Without 4.3 and 4.8 the break released the drug, and the return would have been ",
              "an added medication - but that changes nothing here. LOT ", n, " ended CART_INIT ",
              "on ", fmt(end), ", and that branch is an added medication followed by a CAR-T ",
              "within ", if (is.null(p$cart) || is.na(p$cart)) "cart_consolidation_days" else p$cart,
@@ -802,27 +801,27 @@ return_trace_narrative <- function(row, lines, episodes, p, tx = NULL, subs = NU
              " still ends CART_INIT on ", fmt(end), ", and the infusion - not ", drug,
              " - still opens the line after it.")
     } else if (proc_end_tie) {
-      paste0("Before 30 Aug 2026 the break released the drug, and the return would have been ",
+      paste0("Without 4.3 and 4.8 the break released the drug, and the return would have been ",
              "an added medication on ", format(ret), " - but LOT ", n, " ended ", reason,
              " on ", fmt(end), ", the same day, and 7.1 puts the procedure above an added ",
              "medication when the two land together. Which of them would have ended LOT ", n,
              " cannot be read from these tables: a build of the same cohort with ",
              "APPLY_OWN_RETURN_FOLD=FALSE, differenced against this one, is what settles it.")
     } else if (is.na(cover$own_end)) {
-      paste0("Before 30 Aug 2026 the break released the drug, and this return would have ",
+      paste0("Without 4.3 and 4.8 the break released the drug, and this return would have ",
              "opened a new line on ", format(ret), ". The episodes read here show no cover ",
              "for LOT ", n, "'s regimen before it, so which end LOT ", n, " would have had ",
              "cannot be said from them: MED_ADD on ", format(ret - 1L), " if another of its ",
              "drugs still ran, or DISCONTINUATION on its run-out if none did.", cap_txt)
     } else if (ret > cover$own_end) {
-      paste0("Before 30 Aug 2026 the break released the drug, and this return would have ",
+      paste0("Without 4.3 and 4.8 the break released the drug, and this return would have ",
              "opened a new line on ", format(ret), ". LOT ", n, "'s regimen (", own_txt,
              ") had run out on ", format(cover$own_end), ", before the return, so the return ",
              "would have confirmed that run-out (5.3): LOT ", n, " would have ended ",
              "DISCONTINUATION on ", format(cover$own_end), " and the next line would have ",
              "started on ", format(ret), " with ", drug, ".", cap_txt)
     } else {
-      paste0("Before 30 Aug 2026 the break released the drug, and this return would have ",
+      paste0("Without 4.3 and 4.8 the break released the drug, and this return would have ",
              "been an added medication: LOT ", n, "'s regimen (", own_txt, ") was still covered on ",
              format(ret), " (cover ran to ", format(cover$own_end), "), so LOT ", n,
              " would have ended MED_ADD on ", format(ret - 1L), " and a new line would have ",
@@ -846,8 +845,8 @@ return_trace_narrative <- function(row, lines, episodes, p, tx = NULL, subs = NU
       else paste0("Under 4.3 a drug of the line's own regimen never starts a line, so the ",
                   "return stayed in LOT ", n, ", which runs on over the break")
     if (melp_ambig)
-      pre <- paste0("The reading before 30 Aug 2026 does not follow either: 4.7 is older than ",
-                    "those rules, so if it is what acted here, this return was never released ",
+      pre <- paste0("The reading without 4.3 and 4.8 does not follow either: 4.7 applies ",
+                    "with or without them, so if it is what acted here, this return was never released ",
                     "and no line was ever going to open on it. A build of the same cohort with ",
                     "APPLY_MELP_RULE=off, differenced against this one, is what separates the ",
                     "two rules.")
@@ -909,8 +908,8 @@ return_trace_narrative <- function(row, lines, episodes, p, tx = NULL, subs = NU
         drug, " was in LOT ", n - 1L, "'s regimen (", prev_meds, ") and came back on ", format(ret),
         " as a short course", conf, ". 4.7 makes such a course a line of its own from its first day, ",
         "and melphalan is the one agent 4.3 exempts from 'a drug of the previous regimen never ",
-        "starts a line'. ", ended, " The 30 Aug 2026 rules changed nothing here: this is 4.7's ",
-        "reading, and it held before them too."))
+        "starts a line'. ", ended, " 4.3 and 4.8 change nothing here: this is 4.7's ",
+        "reading, and it holds without them too."))
     }
     if (identical(via, "melp_confirmed")) {
       md <- .return_trace_melp_days(p)
@@ -942,8 +941,8 @@ return_trace_narrative <- function(row, lines, episodes, p, tx = NULL, subs = NU
              ". 4.8's fold set is the immediately previous line's regimen only, so a drug from ",
              "further back is out of its scope, and 4.3 does not hold it either: when ", drug,
              " came back on ", format(ret), " it was a new agent like any other. ", ended)
-    return(paste0(from_txt, away, " ", why, " The 30 Aug 2026 rules changed nothing here: ",
-                  "this return opened a line under the earlier reading too."))
+    return(paste0(from_txt, away, " ", why, " 4.3 and 4.8 change nothing here: ",
+                  "this return opens a line without them too."))
   }
 
   paste0(drug, " in LOT ", n, ": ", kind, " on ", format(ret), ".")
@@ -993,7 +992,7 @@ return_trace_markdown <- function(run_id, pfx, p, summary, patients_sections, ma
   gap <- if (is.null(p$gap) || is.na(p$gap)) "map_discon_gap_days" else paste0(p$gap, " days")
   ln <- c(paste0("# Returning-drug trace - prefix `", pfx, "`"),
           "",
-          paste0("Run `", run_id, "`. What the rules adopted on 30 Aug 2026 (LOT_RULES.md ",
+          paste0("Run `", run_id, "`. What the returning-drug rules (LOT_RULES.md ",
                  "4.3 and 4.8) did with drugs that came back, on the patients they touched: ",
                  "raw MAP episodes beside the final lines, the returns marked."),
           "",
@@ -1053,9 +1052,9 @@ return_trace_markdown <- function(run_id, pfx, p, summary, patients_sections, ma
                  ", CAR-T ", p$cart, ". A permissible substitute and the drug it replaces are one ",
                  "agent in the fold and line-opening tests (4.4); an own return is read under the ",
                  "drug's own name, because a substitute's restart was never released under the ",
-                 "older reading either and so is not a return this rule changed. Each paragraph ",
+                 "reading without them either and so is not a return this rule changed. Each paragraph ",
                  "also says what the reading ",
-                 "before 30 Aug 2026 would have made of the return - a local reading of these ",
+                 "without 4.3 and 4.8 would have made of the return - a local reading of these ",
                  "tables, stated for the FIRST return the rules decided in a patient; a later ",
                  "one says that it cannot be read locally. A build of the same cohort with ",
                  "APPLY_MAP_FOLDIN=FALSE and APPLY_OWN_RETURN_FOLD=FALSE, differenced against ",

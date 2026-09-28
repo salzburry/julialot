@@ -1,7 +1,7 @@
 # Clinical-trial evidence, anchored on the 1L index.
 #
 # Not a criterion. Clinical trial does not filter this cohort and must not
-# start: this is a descriptive flag the study team asked for, and the funnel is
+# start: this is a descriptive flag, and the funnel is
 # built from NDMM_CRITERIA alone.
 #
 # It gets its own table rather than columns on NDMM_FLAGS_ALL. Every column
@@ -11,9 +11,7 @@
 #
 # ---- why it exists -------------------------------------------------------
 #
-# The broad build already flags clinical trial, but on ITS index - the
-# diagnosis-based candidate it selects - and the study team's question is about
-# the 1L start:
+# The question is about clinical trial evidence against the 1L start:
 #
 #   "was the POMA recorded at LOT1 really first line, or did trial therapy
 #    come before it?"
@@ -43,10 +41,8 @@
 # here because it is the window filter #4 uses for prior MM therapy, so the two
 # can be read side by side. Adding it to the others double-counts, which is why
 # it is named for its window rather than for a position in a sequence.
-# clintrial.csv, in the shape the claim scan joins on. Same file and the same
-# normalisation the broad build uses, so "a trial claim" means one thing across
-# the two cohorts and a difference between them is about the window, not about
-# the codes.
+# clintrial.csv, in the shape the claim scan joins on, normalised the way every
+# other code list here is.
 # Every code_type the claim scan in build_ndmm_clintrial_flags() can emit: the
 # two ICD families off med_diagnosis, the two off med_procedure, and HCPCS and
 # REV off the medical stack(3). A clintrial.csv row typed anything else - CPT,
@@ -112,7 +108,7 @@ build_ndmm_clintrial_codes <- function(con) {
 
 # One row per cohort patient with a 1L start.
 #
-# Five claim sources, the same five the broad build scans: diagnosis, PROC_CD,
+# Five claim sources: diagnosis, PROC_CD,
 # BILL_PROC_CD (the facility-claim procedure code - a code populated only there
 # is missed without it), ICD procedure, and revenue code. Bounded to the study
 # period, and joined to NDMM_LOT1_STARTS so it scans this cohort's patients

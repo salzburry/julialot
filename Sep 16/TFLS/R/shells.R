@@ -2,7 +2,7 @@
 #
 # They are meant to be edited by hand, so every mistake the code could
 # otherwise carry into a published table stops the run here, naming the file
-# and the row. A shell asking for a statistic nothing implements is a defect in
+# and the row. A shell asking for a statistic nothing implements is an error in
 # the shell, not a blank cell in the output.
 #
 # Sourced first: the helpers below are used by every other file in R/.
@@ -62,8 +62,8 @@ selector_has <- function(values, x, kind) {
 # --- refusals ---------------------------------------------------------------
 #
 # Two conditions, because they mean different things to the runner: a shell
-# file that is not there yet is a delivery still being written, and a shell
-# file that is there and wrong is a defect to fix.
+# file that is not there yet is a shell set still being written, and a shell
+# file that is there and wrong is an error to fix.
 
 shell_stop <- function(file, row, ...) {
   where <- if (length(row) != 1L || is.na(row)) "" else paste0(" row ", row)
@@ -300,8 +300,8 @@ check_unique_order <- function(d, file) {
 }
 
 # What a statistic can do with its measure and its filter, checked before
-# anything is filled, because what it cannot use it used to drop without a
-# word.
+# anything is filled, so that what it cannot use is refused rather than
+# dropped without a word.
 #
 # A curve's measure is its endpoint and nothing else: a comparison on it was
 # never applied. The month a probability is read at is one number, at or after

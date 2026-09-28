@@ -52,7 +52,7 @@ check_skip_wiring <- function(path = .suite_path) {
     return(skip_note(paste0("this suite's own source could not be located, ",
                             "so its skip wiring is unchecked")))
   # A path that names no file is different: the suite worked out where it lives
-  # and got it wrong, which is a defect in this file rather than a missing
+  # and got it wrong, which is an error in this file rather than a missing
   # capability. It returned quietly before, and two suites that resolved their
   # path AFTER a setwd() spent every run with this guard off - silently, and
   # under exactly the invocation the runbook documents.
@@ -75,11 +75,8 @@ check_skip_wiring <- function(path = .suite_path) {
 test_report_status <- function(pass, fail, skipped) {
   cat(sprintf("%d passed, %d failed, %d skipped\n", pass, fail, skipped))
   if (skipped > 0L) {
-    # What actually skipped, in its own words. This used to print the same
-    # sentence in every suite - "Install duckdb and sqlglot" - whatever the
-    # block had skipped for. On the dashboard suite that named the wrong
-    # remedy: the block wanted survival::, both of the named packages were
-    # already installed, and the reader was sent to reinstall them.
+    # What actually skipped, in its own words, so the remedy printed is the
+    # one each block asked for.
     cat("  ", skipped, " block(s) did not run, so this is NOT a clean run:\n", sep = "")
     for (r in skip_reasons) cat("    - ", r, "\n", sep = "")
     cat("  Fix those, or set ALLOW_SKIPPED_TESTS=TRUE to accept it.\n")
@@ -147,7 +144,7 @@ stops(check_qc_catalogue(list(modifyList(LOT_QC_CHECKS[[1]], list(sql = "SELECT 
 cat("\n-- every check answers the same shape --\n")
 # The runner reads N_BAD off every result and nothing else. A check that
 # returned a different shape would be scored as an error, which reads in the
-# report like a defect in the run rather than in the check.
+# report like an error in the run rather than in the check.
 ok(all(vapply(SQL, function(s) has(s, "AS N_BAD"), logical(1))),
    "each one selects N_BAD")
 ok(all(vapply(SQL, function(s) has(s, "AS DETAIL"), logical(1))),
@@ -307,16 +304,15 @@ local({
   ok(grepl("AND 1 = 0", pick("A9"), fixed = TRUE),
      "...while A9, which asks about the SPAN, is the one that reads the setting")
 })
-# C2's exemption belongs to the earlier returning-drug rule, where a confirmed
-# gap released the drug so it could be both in the regimen and the added
-# medication. LOT_RULES.md 4.3 withdrew that release, so under the settings the
-# study pins there is nothing to exempt.
+# C2's exemption belongs to the comparison rule, where a confirmed gap releases
+# the drug so it can be both in the regimen and the added medication. Under the
+# rule the study pins (LOT_RULES.md 4.3) there is nothing to exempt.
 ok(has(SQL$C2, "array_contains(split(coalesce(f.LOT_BASE_MEDS, ''), ' ')"),
    "C2 still catches an added medication that is already in the regimen")
 ok(!has(SQL$C2, "coalesce(r.PREV_DISCON, 0) = 0"),
    "...with no exemption, because the pinned rule releases no such drug")
-# The exemption comes back for a comparison build, where the release is back
-# too. The check reads the run's own setting rather than tolerating both.
+# The exemption applies to a comparison build, where the release applies too.
+# The check reads the run's own setting rather than tolerating both.
 ok(has(c_i_sql_off <- LOT_QC_CHECKS[[which(vapply(LOT_QC_CHECKS,
          function(c_i) identical(c_i$id, "C2"), logical(1)))]]$sql(
            TBL, modifyList(P, list(own_return_fold = FALSE))),
@@ -374,11 +370,11 @@ ok(has(SQL$D3, "= 'STEROID'"),
    "D3 looks for steroids in the episodes, which is where any would survive")
 # Steroids are excluded from lines by class at every decision point, and the
 # rollup drops them as it loads. A steroid episode surviving that is a state
-# the build tolerates rather than a line defect, so a run over a production
+# the build tolerates rather than a line error, so a run over a production
 # list still carrying dexamethasone must not fail its QC for it.
 d3 <- Filter(function(c_i) identical(c_i$id, "D3"), LOT_QC_CHECKS)[[1]]
 ok(identical(d3$severity, "warn"),
-   "...and it reports rather than fails: the list's state, not a line defect")
+   "...and it reports rather than fails: the list's state, not a line error")
 # B8: the confirmation window. The count is only meaningful against this run's
 # own window - a hardcoded 90 would misread a run built with a different one,
 # and it reads lot_discon_confirm_days now that the run records it rather than
@@ -501,7 +497,7 @@ ok(has(SQL$E5, "WHERE a.n_lines > 0"),
 # And only from the first line onward. The SCT step keeps claims from
 # INDEX_DATE and LOT1 opens on the first non-steroid episode, so a transplant
 # can land before any line exists. Splitting on whether the patient has a line
-# at all would make that mismatch a blocking defect for one patient and a
+# at all would make that mismatch a blocking error for one patient and a
 # reported number for another.
 ok(has(SQL$E5, "AND a.dt >= a.first_start"),
    "...and only from the day their first line starts")
@@ -618,7 +614,7 @@ ok(any(grepl("a/b", qc_markdown(piped, "r", "p_", P, ""), fixed = TRUE)),
      "...and C5's is the span bound, where 7.3 puts treatment a line does not name")
 }
 
-# The catalogue's SIZE is the one number the delivery's documents still quote,
+# The catalogue's SIZE is the one number the documents quote,
 # and this is what holds it. Every other count was dropped rather than pinned -
 # an assertion total is trivia a reader never acts on, and it went stale three
 # times because nothing read it. This one a reader does act on: it is how many

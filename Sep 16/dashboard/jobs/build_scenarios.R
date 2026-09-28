@@ -18,7 +18,7 @@
 args <- commandArgs(trailingOnly = TRUE)
 # gsub("~+~"), as every other entry point here does: Rscript writes a space
 # in the script's path as "~+~" on some platforms, and undecoded this job
-# could not find its own folder whenever the delivery was unpacked under a
+# could not find its own folder whenever the study folder was unpacked under a
 # name with a space in it.
 here <- normalizePath(file.path(dirname(gsub("~+~", " ",
   sub("^--file=", "", grep("^--file=", commandArgs(FALSE), value = TRUE)[1]),
@@ -246,7 +246,7 @@ export_one <- function(prefix, env) {
           "sensitive as the warehouse tables it came from: keep the Dataset ",
           "private to the App and Job, and do not share it as a published ",
           "extract. Cutting it down to the S_*_RELEASE tables does not make ",
-          "one - six tables have a released copy and the rest of what a panel ",
+          "one - seven tables have a released copy and the rest of what a panel ",
           "draws has none, so that extract is incomplete AND still ",
           "unsuppressed. TFLS/run_tfls.R fills the shells from this run at a ",
           "floor that may only rise and writes tables carrying no identifier: ",

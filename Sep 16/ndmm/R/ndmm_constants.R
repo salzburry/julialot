@@ -52,12 +52,8 @@ NDMM_MM_ADJACENT_OVERRIDE <- c(
 # build_lot1_starts_ndmm(), so the view never returns a start before it.
 #
 # LOT1_FROM, which is the name config.csv uses and the name cfg$lot1_from
-# reads. It used to be NDMM_LOT1_FROM - one setting under two names, where the
-# config drove the contract check and the constant drove the query. Setting
-# LOT1_FROM alone moved the config, left this behind, and stopped the
-# run in check_constants() after check_contract() had passed; setting both was
-# the documented answer, and nobody should have to know that. check_settings()
-# refuses a leftover NDMM_LOT1_FROM rather than ignoring it.
+# reads, so one setting moves both the contract check and the query.
+# check_settings() refuses an NDMM_LOT1_FROM rather than ignoring it.
 NDMM_LOT1_FROM <- Sys.getenv("LOT1_FROM", unset = "2019-01-01")
 
 # Raw CDM confinement table, which tells inpatient from outpatient in the

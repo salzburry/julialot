@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The mid-August MAP-splitting screen, held to the engine it sizes.
+"""The MAP-splitting screen, held to the engine it sizes.
 
 Plants patients, builds their lines with the engine's own SQL, then runs the
 EXACT screen and funnel SQL out of analysis/questions/aug15_studyteam_qs.R
@@ -64,7 +64,7 @@ PATS = [
 ]
 
 def main():
-    sqldir = tempfile.mkdtemp(prefix="aug15t_")
+    sqldir = tempfile.mkdtemp(prefix="mapsplit_")
     # Built WITHOUT the fold-in on purpose. This screen exists to size the
     # boundaries a returning prior-line drug creates, and the contract build
     # now folds most of them away - so run against it the screen would find

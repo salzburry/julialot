@@ -2,16 +2,15 @@
 #
 # Every window in the protocol is built here and nowhere else, so a boundary
 # convention is written once. The protocol is explicit about which end of an
-# interval is included and which excluded, and it REVERSED those conventions
-# from its June 2026 version (../VERSION_DIFF.md section 1), so each end is
-# named in the argument list rather than assumed.
+# interval is included and which excluded, so each end is named in the
+# argument list rather than assumed.
 
 # Days between two dates, with each endpoint declared.
 #
 #   from_incl  to_incl   meaning                       expression
 #   TRUE       TRUE      a closed interval             datediff(to, from) + 1
 #   TRUE       FALSE     time-to-event from the index  datediff(to, from)
-#   FALSE      TRUE      the June 2026 convention      datediff(to, from)
+#   FALSE      TRUE      the start excluded, end in    datediff(to, from)
 #   FALSE      FALSE     neither endpoint counts       datediff(to, from) - 1
 interval_days_sql <- function(from, to, from_incl = TRUE, to_incl = FALSE) {
   adj <- (if (isTRUE(from_incl)) 1L else 0L) + (if (isTRUE(to_incl)) 1L else 0L) - 1L

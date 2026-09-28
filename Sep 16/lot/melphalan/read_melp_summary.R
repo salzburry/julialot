@@ -8,7 +8,7 @@
 #   3. how many receive an SCT in a melphalan-containing LOT, by line
 #
 #   DATABRICKS_PWD=... DOMINO_USER_NAME=usr00000 \
-#     Rscript lot/melphalan/read_melp_asks.R
+#     Rscript lot/melphalan/read_melp_summary.R
 #
 # Reads the cells run_melp_simple.R has already built and writes five CSVs -
 # question 1 takes three of them, because a per-cell median cannot say what
@@ -45,23 +45,19 @@ dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
 # The previous answers are removed before this read starts, not when it
 # finishes writing. Any check below can stop the read, and an interrupted read
 # should leave no answer rather than an older one that looks current.
-ASK_CSVS <- c("melp_ask1_line_duration.csv",
-              "melp_ask1_paired_line_change.csv",
-              "melp_ask1_line_count_change.csv",
-              "melp_ask2_regimens_by_line.csv",
-              "melp_ask3_sct_in_melp_lot.csv",
-              # The name Q2 used before it carried the distribution. Cleared
-              # too, so a folder holding both files cannot be read as two
-              # answers to the same question.
-              "melp_ask2_melp_lots_by_line.csv")
-for (f in file.path(out_dir, ASK_CSVS)) if (file.exists(f)) unlink(f)
+OUT_CSVS <- c("melp_q1_line_duration.csv",
+              "melp_q1_paired_line_change.csv",
+              "melp_q1_line_count_change.csv",
+              "melp_q2_regimens_by_line.csv",
+              "melp_q3_sct_in_melp_lot.csv")
+for (f in file.path(out_dir, OUT_CSVS)) if (file.exists(f)) unlink(f)
 
 stop_if_blank(cfg$pwd, "DATABRICKS_PWD environment variable is not set.")
 con <- DBI::dbConnect(odbc::odbc(), dsn = cfg$dsn, pwd = cfg$pwd, timeout = 120)
 on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
 
 cells <- melp_cell_plan(MELP_CELLS,
-                        trimws(Sys.getenv("AUG1_PREFIX_BASE", unset = "melp_")))
+                        trimws(Sys.getenv("MELP_PREFIX_BASE", unset = "melp_simple_")))
 tbl <- function(cell, name) paste0(cfg$catalog, ".", schema, ".", cell$prefix, name)
 
 # Provenance, through the package's own checks rather than a second set here.
@@ -295,19 +291,19 @@ write_out <- function(d, name, title) {
 # the read is held to the attempt it started on before anything is written.
 melp_status_unchanged(con, cells, status)
 
-write_out(q1, "melp_ask1_line_duration.csv",
+write_out(q1, "melp_q1_line_duration.csv",
           "1. Duration of each line (each cell's own median - the change is NOT paired)")
-write_out(q1_paired, "melp_ask1_paired_line_change.csv",
+write_out(q1_paired, "melp_q1_paired_line_change.csv",
           "1b. The same patient's line, in each cell, against the reference")
-write_out(q1_lines, "melp_ask1_line_count_change.csv",
+write_out(q1_lines, "melp_q1_line_count_change.csv",
           "1c. Change in the number of lines a patient ends up with")
 if (!is.null(q2) && nrow(q2))
   q2$MONO_MEANS <- paste0("mono among captured non-steroid MM agents - ",
                           "steroids are excluded from regimens, so melphalan ",
                           "with a steroid still reads as melphalan mono")
-write_out(q2, "melp_ask2_regimens_by_line.csv",
+write_out(q2, "melp_q2_regimens_by_line.csv",
           "2. Distribution of regimens at each line")
-write_out(q3, "melp_ask3_sct_in_melp_lot.csv",
+write_out(q3, "melp_q3_sct_in_melp_lot.csv",
           "3. An SCT inside a melphalan-containing LOT")
 
 # The row the question names, pulled out of the distribution rather than

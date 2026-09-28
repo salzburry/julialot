@@ -1549,7 +1549,7 @@ check_lot_long <- function(con, cfg) {
       FROM {tbl})
     WHERE prev_end IS NOT NULL AND LOT_START_DT <= prev_end"))$n
   # And no line may run past the patient's observation. Every branch of the
-  # end-date rule is bounded by OBS_END_DT, so a breach is a real defect.
+  # end-date rule is bounded by OBS_END_DT, so a breach is a real error.
   past_obs <- db_q(con, glue("
     SELECT count(*) AS n
     FROM {tbl} l

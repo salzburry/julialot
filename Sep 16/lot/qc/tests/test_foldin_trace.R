@@ -55,7 +55,7 @@ check_skip_wiring <- function(path = .suite_path) {
     return(skip_note(paste0("this suite's own source could not be located, ",
                             "so its skip wiring is unchecked")))
   # A path that names no file is different: the suite worked out where it lives
-  # and got it wrong, which is a defect in this file rather than a missing
+  # and got it wrong, which is an error in this file rather than a missing
   # capability. It returned quietly before, and two suites that resolved their
   # path AFTER a setwd() spent every run with this guard off - silently, and
   # under exactly the invocation the runbook documents.
@@ -78,11 +78,8 @@ check_skip_wiring <- function(path = .suite_path) {
 test_report_status <- function(pass, fail, skipped) {
   cat(sprintf("%d passed, %d failed, %d skipped\n", pass, fail, skipped))
   if (skipped > 0L) {
-    # What actually skipped, in its own words. This used to print the same
-    # sentence in every suite - "Install duckdb and sqlglot" - whatever the
-    # block had skipped for. On the dashboard suite that named the wrong
-    # remedy: the block wanted survival::, both of the named packages were
-    # already installed, and the reader was sent to reinstall them.
+    # What actually skipped, in its own words, so the remedy printed is the
+    # one each block asked for.
     cat("  ", skipped, " block(s) did not run, so this is NOT a clean run:\n", sep = "")
     for (r in skip_reasons) cat("    - ", r, "\n", sep = "")
     cat("  Fix those, or set ALLOW_SKIPPED_TESTS=TRUE to accept it.\n")
@@ -336,20 +333,20 @@ ok(identical(v(g("by drug", "LEN")), c(4, 4, 4)) && identical(v(g("by drug", "PO
 ok(identical(unname(unlist(g("LOT_LONG_FINAL", "all lines")[c("n_patients", "n_lines")])), c(1000, 2600)),
    "the table's own totals are beside them, for scale")
 ok(identical(v(S[grepl("non-MED", S$level), ]), c(0, 0, 0)),
-   "with no start type in the frame every row is a fold and the defect row is 0/0/0")
+   "with no start type in the frame every row is a fold and the error row is 0/0/0")
 S0 <- foldin_trace_summary(CANDS[0, ], 10, 20)
 g0 <- function(level, key) S0[S0$level == level & S0$key == key, ]
 ok(nrow(S0) == 3 && identical(v(g0("folds", "all")), c(0, 0, 0)) &&
      identical(unname(unlist(g0("LOT_LONG_FINAL", "all lines")[c("n_patients", "n_lines")])), c(10, 20)),
    "no folds gives the three header rows with zero fold counts, not an error")
 # A signature on a CAR-T-opened line is not a fold: kept out of the fold
-# counts, counted on the defect row.
+# counts, counted on the error row.
 CANDS3 <- CANDS2; CANDS3$LOT_START_TYPE <- c("MED", "MED", "MED", "CART", "MED", "MED", "MED")
 S3 <- foldin_trace_summary(CANDS3, 1000, 2600)
 g3 <- function(level, key) S3[S3$level == level & S3$key == key, ]
 ok(identical(v(g3("folds", "all")), c(4, 5, 6)) && identical(v(S3[grepl("non-MED", S3$level), ]), c(1, 1, 1)) &&
      nrow(g3("by drug", "BORT")) == 0 && identical(v(g3("by LOT_NUM", "LOT2")), c(3, 3, 4)),
-   "a signature on a non-MED line leaves the fold counts (P5's BORT) and is counted as a defect")
+   "a signature on a non-MED line leaves the fold counts (P5's BORT) and is counted as an error")
 
 cat("\n-- annotate --\n")
 LINES <- data.frame(
@@ -456,7 +453,7 @@ L_SIG <- LINES; L_SIG$LOT_START_TYPE[2] <- "CART"; L_SIG$ELIGIBLE_END[2] <- as.D
 A5 <- foldin_trace_annotate(L_SIG, EPS, NULL, FOLDS, P)
 ok(!any(grepl("FOLDED", A5$note)) &&
      identical(A5$note[A5$MAP_MED_TYPE == "LEN" & A5$MAP_START_DT == as.Date("2020-08-15")],
-               "signature on LOT 2, a CART line: not a 4.8 fold, raise as a build defect"),
+               "signature on LOT 2, a CART line: not a 4.8 fold, raise as a build error"),
    "on a CAR-T-opened line the returning dose is marked as a signature to raise, never FOLDED")
 stops(foldin_trace_annotate(LINES[, setdiff(names(LINES), "ELIGIBLE_END")], EPS, NULL, FOLDS, P),
       "lines without a window end are refused rather than annotated against nothing")
@@ -506,17 +503,17 @@ ok(has(foldin_trace_narrative(FOLDS[1, ], LINES_OP, EPS_OP2, P, subs = SUBS), "w
      has(foldin_trace_narrative(FOLDS[1, ], LINES_OP, EPS_OP2, P), "with BORTBS and CARF."),
    "...its substitute too, when the pairs are given")
 # A CAR-T-opened line: 4.8 refuses the fold there, so the signature is a
-# defect and the paragraph says so rather than reading it as the rule.
+# error and the paragraph says so rather than reading it as the rule.
 F_CART <- FOLDS; F_CART$ELIGIBLE_END <- as.Date("2020-08-14"); F_CART$RETURN_DT <- as.Date("2020-08-20")
 F_CART$LOT_START_TYPE <- "CART"
 L_CART <- LINES; L_CART$LOT_START_TYPE[2] <- "CART"; L_CART$ELIGIBLE_END[2] <- as.Date("2020-08-14")
 N2 <- foldin_trace_narrative(F_CART[1, ], L_CART, EPS, P)
 ok(has(N2, "was opened by a transplant (CART)") && has(N2, "45-day induction window") &&
-     has(N2, "4.8 refuses a fold across a procedure") && has(N2, "build defect") && has(N2, "C1 accepts") &&
+     has(N2, "4.8 refuses a fold across a procedure") && has(N2, "build error") && has(N2, "C1 accepts") &&
      !has(N2, "under 4.8 it joined") && !has(N2, "Without the rule"),
-   "a CAR-T-started line: the signature is reported as a build defect, not as 4.8 at work")
+   "a CAR-T-started line: the signature is reported as a build error, not as 4.8 at work")
 F_CART2 <- F_CART; F_CART2$LOT_START_TYPE <- NULL
-ok(has(foldin_trace_narrative(F_CART2[1, ], L_CART, EPS, P), "build defect"),
+ok(has(foldin_trace_narrative(F_CART2[1, ], L_CART, EPS, P), "build error"),
    "...read off the line's own start type when the candidate row has none")
 F_CUT <- FOLDS; F_CUT$ELIGIBLE_END <- as.Date("2020-07-10")
 ok(has(foldin_trace_narrative(F_CUT[1, ], LINES, EPS, P), "cut short by a transplant"),
@@ -646,8 +643,8 @@ ok(any(has(SEC9, "no line in LOT_LONG_FINAL")) && any(has(SEC9, "Check the id"))
 ok(any(has(foldin_trace_md_table(data.frame(n = 100000, d = as.Date("2020-01-01"))), "| 100000 |")) &&
      !any(has(foldin_trace_md_table(data.frame(n = 100000)), "1e+05")),
    "a round count renders as digits in a table cell, never in scientific notation")
-ok(any(has(MD_U, "non-MED line")) && any(has(MD_U, "build defect")),
-   "the header says what the defect row of the summary is")
+ok(any(has(MD_U, "non-MED line")) && any(has(MD_U, "build error")),
+   "the header says what the error row of the summary is")
 
 cat("\n-- the candidate query, RUN rather than read --\n")
 {
@@ -793,7 +790,7 @@ cat("\n-- the candidate query, RUN rather than read --\n")
     # (e) a CAR-T-started line takes the 45-day window: day 40 is inside it,
     # day 50 is not. The signature on such a line is NOT a fold - 4.8 refuses
     # one across a procedure that opened the line - so the row comes back
-    # with its start type, for the narrative to report it as a defect.
+    # with its start type, for the narrative to report it as an error.
     E1 <- BASE
     E1$final[[2]]$LOT_START_TYPE <- "CART"
     E1$allo <- list(list(PATID = "P000001", TX_DT = "2020-07-01", SCT_TYPE = "CART"))
@@ -830,7 +827,7 @@ cat("\n-- the candidate query, RUN rather than read --\n")
     # The per-patient reads, run on the fixture's fold and fed to the
     # renderer: the whole chain from warehouse shape to marked row, without a
     # warehouse. Twice, for the MED line where the fold is the rule's and the
-    # CAR-T line where the same signature is a defect. The renderer calls sit
+    # CAR-T line where the same signature is an error. The renderer calls sit
     # inside ok() so a query returning nothing is a FAIL with a count line.
     Q <- list(lines = foldin_trace_lines_sql(EXEC_TABLES, "P000001", P),
               eps = foldin_trace_episodes_sql(EXEC_TABLES, "P000001"),
@@ -856,7 +853,7 @@ cat("\n-- the candidate query, RUN rather than read --\n")
       ann <- foldin_trace_annotate(rr$lines, rr$eps, rr$tx, rr$c, P, subs = rr$subs)
       nrow(rr$c) == 1 && !any(grepl("FOLDED", ann$note)) &&
         identical(ann$note[ann$MAP_MED_TYPE == "LEN" & ann$MAP_START_DT == as.Date("2020-08-20")],
-                  "signature on LOT 2, a CART line: not a 4.8 fold, raise as a build defect") &&
+                  "signature on LOT 2, a CART line: not a 4.8 fold, raise as a build error") &&
         identical(ann$note[ann$MAP_MED_TYPE == "CART"], "opens LOT 2") &&
         identical(ann$note[ann$MAP_MED_TYPE == "SCT_AUTO"], "") &&
         identical(ann$line[ann$MAP_MED_TYPE == "SCT_AUTO"], "")
@@ -864,8 +861,8 @@ cat("\n-- the candidate query, RUN rather than read --\n")
     ok({
       nn <- foldin_trace_narrative(rr$c[1, ], rr$lines, rr$eps, P, tx = rr$tx, subs = rr$subs)
       nrow(rr$c) == 1 && has(nn, "was opened by a transplant (CART)") && has(nn, "50 days after LOT 2") &&
-        has(nn, "45-day") && has(nn, "build defect")
-    }, "...and the narrative off the same rows reports the CAR-T line's signature as a defect")
+        has(nn, "45-day") && has(nn, "build error")
+    }, "...and the narrative off the same rows reports the CAR-T line's signature as an error")
     # The MED line, whole chain. CARF's cover ends 2020-08-01, before LEN's
     # return, so the pre-rule reading is the run-out.
     G2 <- BASE; G2$auto <- list(list(PATID = "P000001", TX_DT = "2019-06-01"))

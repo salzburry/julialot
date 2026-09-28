@@ -334,11 +334,10 @@ check_study_code <- function(md, where) {
 # LOT build wrote into and reported the study's tables missing.
 #
 # The catalog comes from DATABRICKS_CATALOG and the cohort from
-# INPUT_COHORT_TABLE, which is what that run read them from. This used to
-# want the same facts under names of its own - TFLS_CATALOG,
-# TFLS_COHORT_TABLE - so an environment that had carried the study run
-# stopped short of the fill. The TFLS_* names still win where set; the rest
-# is what that run ran under.
+# INPUT_COHORT_TABLE, which is what that run read them from, so an
+# environment that carried the study run carries the fill too.
+# TFLS_CATALOG and TFLS_COHORT_TABLE win where set; the rest is what that
+# run ran under.
 #
 # Each is a warehouse name and nothing else - no path is built from it - so
 # each is gated on whether quoting can hold it rather than on a pattern, which
@@ -441,7 +440,7 @@ main <- function() {
   floor_n <- tfls_floor_from_env()
   sh <- tryCatch(load_shells(shells_dir), tfls_missing_shells = function(e) e)
   if (inherits(sh, "condition")) {
-    # The shells are the delivery; without them there is nothing to list and
+    # The shells are what this fills; without them there is nothing to list and
     # nothing to fill, and saying so is not the same as failing to read a run.
     cat("\n", conditionMessage(sh), "\n", sep = "")
     cat("Nothing was read.\n")

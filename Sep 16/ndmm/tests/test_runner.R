@@ -316,7 +316,7 @@ ok(length(unpinned) == 0,
                                 paste(unpinned, collapse = ", "))
    else "and every one of them is checked against the contract")
 ok("NDMM_LOT1_FROM" %in% pinned,
-   "NDMM_LOT1_FROM among them, which is the one that used to get away")
+   "NDMM_LOT1_FROM among them")
 # The invariant that makes config.csv authoritative: a constant the SQL reads
 # and the cfg entry it is checked against must come from the SAME environment
 # variable. Two names for one setting is what let LOT1_FROM move the config
@@ -2220,20 +2220,18 @@ ok(regexpr("build_ndmm_flags(", paste(bn, collapse = "\n"), fixed = TRUE) <
      regexpr("build_ndmm_clintrial_flags(", paste(bn, collapse = "\n"), fixed = TRUE),
    "...it is built after the cohort flags, so it cannot feed them")
 # The three windows partition the study period; the fourth spans two of them.
-# Adding all four double-counts, which is exactly what the broad build's two
-# overlapping flags invited.
+# Adding all four double-counts.
 ok(all(vapply(c("CLINTRIAL_PRE_DX", "CLINTRIAL_DX_TO_LOT1", "CLINTRIAL_POST_LOT1",
                 "CLINTRIAL_PRE_LOT1_12MO"),
               function(w) any(grepl(paste0("AS ", w), ct, fixed = TRUE)), logical(1))),
    "the four windows are all cut at the 1L index or the diagnosis")
 ok(any(grepl("do not add it to them", ct, fixed = TRUE)),
    "...and the run log says which of them overlap")
-# The question the broad build's flags cannot answer: trial evidence between
-# the MM diagnosis and the 1L start. Its baseline ends before the diagnosis
-# index; its follow-up starts there and runs past LOT1.
+# The question this answers: trial evidence between the MM diagnosis
+# and the 1L start.
 ok(any(grepl("m.event_dt >= a.MM_DX_DT", ct, fixed = TRUE)) &&
      any(grepl("m.event_dt <  a.LOT1_START_DT", ct, fixed = TRUE)),
-   "the diagnosis-to-1L window is its own column, which is the one that was missing")
+   "the diagnosis-to-1L window is its own column")
 ok(any(grepl("AS CLINTRIAL_DAYS_BEFORE_LOT1", ct, fixed = TRUE)),
    "...with the timing, not just a yes/no")
 # A missing MM_DX_DT would put a patient in none of the three windows and read
@@ -2241,10 +2239,9 @@ ok(any(grepl("AS CLINTRIAL_DAYS_BEFORE_LOT1", ct, fixed = TRUE)),
 ok(any(grepl("have no ", ct, fixed = TRUE)) &&
      any(grepl("MM_DX_DT. The three windows", ct, fixed = TRUE)),
    "a patient with no diagnosis date stops the build rather than reading as clean")
-# Same file, same normalisation as the broad build, so a difference between
-# the two cohorts is about the window and not about the codes.
+# The codes come from the code list, read like every other one.
 ok(any(grepl('load_codelist_csv("clintrial.csv"', ct, fixed = TRUE)),
-   "the codes come from clintrial.csv, the file the broad build reads")
+   "the codes come from clintrial.csv")
 ok("clintrial.csv" %in% CODELIST_FILES,
    "...and it is declared, so its md5 is recorded beside the other four")
 # An unrecognised ICD flag must match neither family, not default to ICD-10.
@@ -2494,7 +2491,7 @@ local({
   ok(!is.null(attr(st, "status")) && attr(st, "status") != 0L,
      "a run that errors under run_logged() still stops, and says so to the shell")
   ok(any(grepl("ERROR: SCHEMA ERROR: the reason", got, fixed = TRUE)),
-     "...and its reason is in the run log, where it used to reach the console alone")
+     "...and its reason is in the run log, not only on the console")
   ok(any(grepl("9530", got, fixed = TRUE)) && any(grepl("n_pat", got, fixed = TRUE)),
      "a table the run print()s is in the log, not only on the screen")
   ok(any(grepl("WARNING: a loud warning", got, fixed = TRUE)) &&

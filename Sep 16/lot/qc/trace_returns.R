@@ -6,7 +6,7 @@
 #   # list what it would do; no connection
 #   Rscript lot/qc/trace_returns.R
 #
-#   # run it - the 2L question, as the study team asked it
+#   # run it - the 2L question
 #   DATABRICKS_PWD=... DOMINO_USER_NAME=usr00000 OBJECT_PREFIX=ndmm_ \
 #     TRACE_EXECUTE=TRUE Rscript lot/qc/trace_returns.R
 #
@@ -22,7 +22,7 @@
 # drug that came back and OPENED a line, which neither rule prevents. Each
 # patient's raw MAP episodes are shown beside the final lines, the returns
 # marked, with a paragraph per return saying what the rule did and what the
-# reading before 30 Aug 2026 would have done.
+# reading without 4.3 and 4.8 would have done.
 #
 #   TRACE_KINDS        fold,own_return,opens_line (default all three)
 #   TRACE_LINES        return lines to trace, comma-separated. Default 1,2:
@@ -185,7 +185,7 @@ main <- function() {
 
   # Without the rules there is nothing to trace: an own return's signature
   # cannot occur in a build that released the drug, and a fold's cannot occur
-  # in one that did not fold. Such rows would be defects, which is the QC's
+  # in one that did not fold. Such rows would be errors, which is the QC's
   # job (checks C1 and C2), not this trace's.
   if (!isTRUE(p$foldin) || !isTRUE(p$own_return_fold))
     stop("Run ", run_id, " did not apply the returning-drug rules (apply_map_foldin=",
@@ -212,11 +212,11 @@ main <- function() {
   cat("  in a table of ", fmt(totals$N_PATIENTS[1]), " patients and ",
       fmt(totals$N_LINES[1]), " lines\n", sep = "")
   # A fold's signature on a line a transplant or CAR-T opened is a build
-  # defect, not the rule (R/foldin_trace.R). Said here so it is not read as 4.8.
+  # error, not the rule (R/foldin_trace.R). Said here so it is not read as 4.8.
   n_odd <- sum(cands$KIND == "fold" & !is.na(cands$LOT_START_TYPE) & cands$LOT_START_TYPE != "MED")
   if (n_odd > 0L)
     cat("  ", n_odd, " fold signature(s) sit on a line a transplant or CAR-T opened: 4.8 ",
-        "refuses a fold there, so these are build defects to raise, not folds\n", sep = "")
+        "refuses a fold there, so these are build errors to raise, not folds\n", sep = "")
 
   summary <- return_trace_summary(cands, totals$N_PATIENTS[1], totals$N_LINES[1])
   scope <- return_trace_in_scope(cands, kinds, lines_in)

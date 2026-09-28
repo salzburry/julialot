@@ -2,7 +2,7 @@
 #
 # Both keep the shell's own order and nesting - the rows in the order the shell
 # put them, at the indent the shell gave them, under the headings the shell
-# wrote - because the order of a table shell is part of what was asked for.
+# wrote - because the order of a table shell is part of its specification.
 #
 # Markdown collapses leading spaces, so the indent is written as a
 # non-breaking space entity; a reader that shows the raw text still shows the

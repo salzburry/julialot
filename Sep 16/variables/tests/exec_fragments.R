@@ -70,8 +70,8 @@ FRAG_ROWS <- list(
 # is to run the shipped expression.
 frag_cases <- function(cfg) list(
 
-  # s7.1 and s7.8.1 are explicit about which endpoint counts, and the June 2026
-  # version REVERSED them, so each combination is stated.
+  # s7.1 and s7.8.1 are explicit about which endpoint counts, so each
+  # combination is stated.
   closed = list(
     sql = interval_days_sql("A", "B", from_incl = TRUE,  to_incl = TRUE),
     want = c(R1 = 1, R2 = 11)),

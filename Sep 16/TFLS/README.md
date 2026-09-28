@@ -1,6 +1,6 @@
 # TFLS - the requested table shells, filled
 
-The study team asked for a set of table shells: sample selection, baseline
+The study's table shells cover sample selection, baseline
 characteristics by line of therapy and by subgroup, safety and healthcare
 resource use at 1L and 2L, secondary malignancies, and treatment outcomes by
 regimen class and by subgroup.
@@ -9,6 +9,8 @@ This folder holds the shells as data and the code that fills them from a
 finished study run. It computes nothing clinical of its own: every number comes
 from a table the study package wrote, so a shell cell and the dashboard agree by
 construction.
+
+## Filling them
 
 ```bash
 # list the shells and what each row would read; no connection
@@ -23,119 +25,156 @@ TFLS_SOURCE=warehouse DATABRICKS_PWD=... PROJECT_WORK_SCHEMA=... \
   TFLS_PREFIX=s223926_ TFLS_PACKAGE_DIR=variables Rscript TFLS/run_tfls.R
 ```
 
-`TFLS_PACKAGE_DIR` is required in warehouse mode, and the run stops without it:
-it names the study package whose own connection code is used, so this cannot
-connect differently from the runs it reads. The catalog defaults to
-`hive_metastore` (`TFLS_CATALOG` or `DATABRICKS_CATALOG` move it), and the schema
-is the first of `WORK_SCHEMA`, `PROJECT_WORK_SCHEMA` or the Domino user's own.
+| setting | what it does |
+|---|---|
+| `TFLS_SOURCE` | `snapshot` or `warehouse`. Unset, the shells are listed and nothing is read |
+| `TFLS_PREFIX` | which run: the prefix its tables were written under. Required; letters, digits, `.`, `_` and `-` only |
+| `TFLS_SNAPSHOT_DIR` | snapshot mode: the root whose `<prefix>/<TABLE>.csv` is read. Required there |
+| `TFLS_PACKAGE_DIR` | warehouse mode: the study package directory, whose own connection code is used, so this cannot connect differently from the runs it reads. Required there |
+| `TFLS_CATALOG` | warehouse catalog. Default `DATABRICKS_CATALOG`, then `hive_metastore` |
+| `TFLS_COHORT_TABLE` | the input cohort table, for a row that reads it. Default `INPUT_COHORT_TABLE` |
+| `TFLS_MIN_N` | the floor. It can only raise the protocol's 25 - a lower value leaves it at 25 - and a value that is not a whole number stops the run |
+| `TFLS_OUT_DIR` | where the tables go. Default `TFLS/out/` |
+| `TFLS_STUDY_CODE_MD5` | the approved study build's code fingerprint (`S_RUN_METADATA.STUDY_CODE_MD5`). Unset checks nothing; set, a run produced by any other code is refused |
+| `TFLS_TTE_ELIGIBLE_ONLY` | `TRUE` restricts every curve to `TTE_ELIGIBLE = 1`. Off by default: the study writes the whole cohort and leaves the restriction to the reader, and each curve row's note says which way it went |
+| `TFLS_ALLOW_RECOVERABLE` | `TRUE` fills from tables the run's own release record refuses (**Disclosure** below), and says so |
 
-Output lands in `out/`: one CSV per table, one markdown rendering of all of
-them, and `tfls_unfilled.csv` naming every row nothing could fill and why.
+In warehouse mode the schema is the first of `WORK_SCHEMA`,
+`PROJECT_WORK_SCHEMA` or the Domino user's own - the order the study run
+resolves it in - and `catalog.schema` is accepted where the catalog matches.
+`DATABRICKS_PWD` comes from the environment.
 
-`TFLS_OUT_DIR` moves it, and on a platform that captures one directory as a
-run's results it has to — a file written beside the code is not an output
-there. On Domino that is `/mnt/artifacts/results`, the same place the LOT
-engine's `OUTPUT_DIR` points by default:
+On a platform that captures one directory as a run's results, `TFLS_OUT_DIR`
+has to point into it — a file written beside the code is not an output there.
+On Domino that is `/mnt/artifacts/results`:
 
 ```bash
 TFLS_OUT_DIR=/mnt/artifacts/results/tfls ... Rscript TFLS/run_tfls.R
 ```
 
-## What it knows about the study package, and how
+### What it writes
 
-`contract/study223926_contract.csv` says which module writes which table, which
-of them the release module publishes a suppressed copy of, and which are
-written only when a switch asks for them. It is **generated**, not written by
-hand: `write_study_contract()` in the study package's `R/contract.R` derives it
-from the `MODULES`, `SUPPRESSION_SPEC` and `OPTIONAL_FEATURES` that drive the
-run itself.
+| file | what it is |
+|---|---|
+| `tfls_<table>.csv` | one per table |
+| `tfls.md` | every table rendered, with the run id and the floor |
+| `tfls_unfilled.csv` | every row and column nothing could fill, with `REASON_KIND` - `not_in_run` (the run did not write what it needs), `shell` (the shell does not say enough) or `not_computable` (the statistic cannot be made from what the table holds) - and `REASON` in words |
 
-It is shipped here because a snapshot is filled where that package is not
-installed and cannot be asked. Regenerate it whenever the study registry gains
-a table:
+The files are replaced as one set. The tables are rendered into a staging
+directory, the previous run's files are set aside, the new ones moved in and
+the set-aside discarded; a move that fails puts the previous run back. A
+publish that is *killed* part-way leaves a marker in the set-aside saying how
+far it got, and the next publish resolves it to a whole set - the previous
+run's or the new one's - before it starts, saying so. One publish at a time: a
+`.tfls_publish.lock` directory in the output directory refuses a second, and
+one left by a killed publish is removed by hand, as its message says. Files in
+the output directory that are not the tool's own are left alone.
+
+### What stops a fill
+
+Nothing is written, and the command exits 1, when:
+
+- a shell file is wrong (**The shells** below) - the message names the file and
+  the row;
+- there is no `S_RUN_METADATA` under the prefix, or it is empty, or it cannot be
+  read;
+- the run's newest metadata row is not `complete` - its tables may be the
+  previous build's or part of this one;
+- the run recorded no `MODULES` or no `COHORTS`, so nothing under the prefix can
+  be shown to be its own;
+- the contract shipped here is not the one the run was driven by (below);
+- `TFLS_STUDY_CODE_MD5` is set and the run's `STUDY_CODE_MD5` differs or is
+  missing;
+- the run's `RATE_MULTIPLIER` is not 100,000: every rate row is labelled **per
+  100,000 person-years** and a rate is read off the table as written;
+- the run changed while its tables were being read.
+
+A run that predates `STUDY_CONTRACT_MD5` or `RATE_MULTIPLIER` recorded nothing
+to compare; the command warns and goes on.
+
+## What it knows about the study package
+
+The contract CSV in `contract/` says which module writes which table, which of
+them the release module publishes a suppressed copy of, and which are written
+only when a switch asks for them. It is **generated**, not written by hand:
+`write_study_contract()` in `variables/R/contract.R` derives it from the
+`MODULES`, `SUPPRESSION_SPEC` and `OPTIONAL_FEATURES` that drive the run
+itself. It is shipped here because a snapshot is filled where that package is
+not installed. Regenerate it whenever the study registry gains a table,
+overwriting the one file in `TFLS/contract/`:
 
 ```r
 source("variables/R/registry.R")
 source("variables/R/contract.R")
-write_study_contract("TFLS/contract/study223926_contract.csv")
+write_study_contract(Sys.glob("TFLS/contract/*.csv"))
 ```
 
 `tests/test_tfls.R` regenerates it and compares line for line whenever the
-study package sits beside this folder, so a stale copy fails the suite rather
-than filling a shell from a table the gate does not know to refuse. Shipped on
-its own, it says the check could not run.
+study package sits beside this folder; shipped on its own, it says the check
+could not run.
 
-The run checks it too. A study run records the md5 of the contract it was
-driven by on `S_RUN_METADATA.STUDY_CONTRACT_MD5`, and before anything is read
-under a prefix the shipped copy is hashed the same way - over its lines, so a
-checkout with other line endings is the same contract - and compared. A copy
-that hashes differently is a well-formed contract from another version of the
-package, which the file's own checks cannot see and which can name a table as
-unsuppressed that this run suppressed; the command stops and says which
-package to regenerate it from. No setting waives that. A run that predates the
-column recorded nothing to compare, and the command says so and goes on.
-
-Which study *code*, where a study team has said which: a run also records the
-fingerprint of the R that produced it (`STUDY_CODE_MD5`), and
-`TFLS_STUDY_CODE_MD5` pins the approved one - the same way the study package
-pins the LOT engine's with `LOT_CODE_MD5`. Unset, it checks nothing; set, a
-run produced by any other code is refused rather than filled under the
-approved one's name.
+A run records the md5 of the contract it was driven by on
+`S_RUN_METADATA.STUDY_CONTRACT_MD5`. Before anything is read, the shipped copy
+is hashed the same way - over its lines, so other line endings are the same
+contract - and compared. A difference stops the fill and says which package to
+regenerate it from; no setting waives it, because a contract from another
+version of the package can name a table as unsuppressed that this run
+suppressed.
 
 ## It fills from one run, and reads only what that run wrote
 
 A prefix is not a run. A run writes the modules it selected, for the cohorts it
 selected, and leaves every other table and every other cohort's rows under the
-prefix as the previous run left them, which is what makes a partial re-run
-cheap. So what binds every read here is the run's own record of what it did:
-`MODULES`, `COHORTS` and the readings behind its optional outputs, all on the
-`S_RUN_METADATA` row.
+prefix as the previous run left them. So every read is bound to the run's own
+record on its `S_RUN_METADATA` row - `MODULES`, `COHORTS` and the readings
+behind its optional outputs:
 
-- A table the run's own metadata does not claim reads as absent. Its rows are
+- A table the run's metadata does not claim reads as absent. Its rows are
   reported in `tfls_unfilled.csv`, naming the module that writes it and the
   modules the run recorded - never as a number, and never as a zero.
-- A cohort the run did not select contributes no rows, so a column asking for
-  it is reported unfilled rather than filled from the partition an earlier run
-  built under the same prefix.
+- A cohort the run did not select contributes no rows.
 - A `_RELEASE` table is preferred only where the run ran the release module.
-- A run that recorded no modules, or no cohorts, can vouch for nothing under
-  the prefix, and the command stops rather than filling the shells from it.
-- Every rate row of the shells is labelled **per 100,000 person-years** and a
-  rate is read off the table as written, so a run whose `RATE_MULTIPLIER` says
-  otherwise is refused; a run that predates the column binds with a warning.
 
-The output is replaced as one set. The tables are rendered into a staging
-directory first, the previous run's files are set aside, the new ones moved
-in, and the set-aside discarded; a move that fails puts the previous run
-back. A publish that is *killed* part-way leaves the set-aside directory with
-a marker saying how far it got, and the next publish resolves that to a whole
-set - the previous run's where the new one had not landed, the new one's where
-it had - before it starts, saying so. One publish at a time: a
-`.tfls_publish.lock` directory in the output directory refuses a second, and
-one left by a killed publish is removed by hand, as its message says.
+These are the rules the dashboard applies (`dashboard/R/sources.R`), so a shell
+cell and the same figure on a page rest on the same rows.
 
-These are the rules the dashboard applies in `dashboard/R/sources.R`, applied
-here rather than a second set invented beside them, so a shell cell and the
-same figure on a page cannot rest on different rows. Which module writes which
-table is the study package's own registry (`R/registry.R`), read here from the
-contract that package generates — see **What it knows about the study package**
-above — because a snapshot is filled where the package is not installed and
-cannot be asked.
+## The shells
 
-## The shells are CSV, so they can be edited without touching code
+Five CSV files in `shells/`, edited without touching code:
 
 | file | one row per | what it decides |
 |---|---|---|
-| `shells/tables.csv` | table | which tables exist, their titles and objectives |
-| `shells/columns.csv` | column | the column groups and what each column selects: cohort, line, regimen class, subgroup, period |
-| `shells/rows.csv` | row | the row labels in order, and what each one reads: which study table, which measure, which statistic |
-| `shells/regimen_classes.csv` | class | what counts as a quad, a triplet, a doublet, BCMA, bispecific |
-| `shells/footnotes.csv` | footnote | the markers under each table |
+| `tables.csv` | table | which tables exist, their titles and objectives |
+| `columns.csv` | column | the column groups and what each column selects: cohort, line, regimen class, subgroup, period |
+| `rows.csv` | row | the row labels in order, and what each one reads: which study table, which measure, which statistic |
+| `regimen_classes.csv` | class | what counts as a quad, a triplet, a doublet, BCMA, bispecific |
+| `footnotes.csv` | footnote | the markers under each table (`table_id`, `marker`, `text`) |
 
 Add a row, delete a row, reorder, change a class definition, add a whole table:
-it is all CSV. Nothing is hard-coded. A row naming a measure that does not
-exist is reported in `tfls_unfilled.csv` rather than silently dropped, so an
-edit that asks for something the study does not produce says so.
+it is all CSV. Every file is checked when it is loaded, and a mistake the code
+could carry into a published table - an unknown table id, a statistic nothing
+implements, a measure or subgroup that cannot be read, two rows or columns at
+one position, a table with no rows or no columns - stops the run naming the
+file and the row. A row asking for a column the study table does not have is
+reported in `tfls_unfilled.csv` rather than dropped. Column names are matched
+without case, and common alternative spellings are accepted (`lot_num` for
+`line`, `col_id` for `column_id`; the full list is `TFLS_SHELL_SCHEMA` in
+`R/shells.R`).
+
+### `columns.csv`
+
+| column | meaning |
+|---|---|
+| `table_id` | which table the column belongs to. Required |
+| `col_id` | the column's id within the table. Blank gives `<table>_C<order>` |
+| `group` | the spanning header over a group of columns |
+| `label` | the column heading, exactly as it should print. Required |
+| `order` | position within the table, a whole number. Blank throughout keeps the file's order |
+| `cohort` | `1L`, `2L`, `3L`, `SEC2L`; several with `\|` |
+| `lot_num` | the line, a whole number from 1; several with `\|` |
+| `class` | a `class_id` from `regimen_classes.csv`, a SOC category written out, or several of either with `\|`. Blank or `OVERALL` is the column total |
+| `subgroup` | a restriction on the column's patients (**What a column can be cut by** below) |
+| `period` | the period a table is written by, e.g. `FOLLOWUP` |
 
 ### `rows.csv`
 
@@ -145,141 +184,168 @@ edit that asks for something the study does not produce says so.
 | `order` | position within the table |
 | `section` | `TRUE` for a heading that spans the table |
 | `label` | the row label, exactly as it should print |
-| `indent` | 0, 1 or 2, for nesting under a heading |
+| `indent` | 0, 1 or 2, for nesting under a heading or a subtotal (**Disclosure** reads the nesting as a sum) |
 | `stat` | `n_pct`, `mean_sd`, `median_iqr`, `min_max`, `n`, `n_distinct`, `rate`, `km_median`, `km_prob`, `km_events`, `km_censored`. `n` counts patients; `n_distinct` counts the different values a column holds |
 | `source` | the study table it reads, e.g. `S_DEMOGRAPHICS` |
-| `measure` | the column or facet value, e.g. `SEX=Female`, `AGE_YEARS`, `CONDITION=Acute hepatitis` |
-| `filter` | any extra restriction, e.g. `PERIOD=FOLLOWUP`, `MONTHS=12` |
+| `measure` | the column, or the column and a value, e.g. `SEX=Female`, `AGE_YEARS`, `CONDITION=Acute hepatitis`. A comparison may be `=`, `!=`, `<`, `<=`, `>` or `>=`, and a value may be a list with `\|` |
+| `filter` | any extra restriction, terms joined with `&` or `;`, e.g. `PERIOD=FOLLOWUP`, `MONTHS=12` |
 | `note` | footnote marker |
+
+A row that reads a `source` has to name a `stat`. A curve row's `measure` is
+its endpoint and nothing else; a comparison goes in the filter. A `km_prob` row
+needs exactly one `MONTHS=<n>` in its filter, `n` at or after the index, and
+`MONTHS` on any other row stops the load rather than being ignored.
 
 ### `regimen_classes.csv`
 
-Nothing here classifies a regimen. The study package already does that, and a
-second classifier over the drug list would be a second opinion of the same
-question. This file is a MAPPING: `soc_categories` names the study categories
-that roll into a column, separated by `|`, and `requires_drug` narrows a
-category further where a column asks for something the study's vocabulary does
-not separate.
+Nothing here classifies a regimen: the study package assigns each line a
+`SOC_CATEGORY`, and this file is a MAPPING from those categories to column
+headings. So a column is changed by editing one line here.
 
-So a column is changed by editing one line here, and a category the study does
-not produce is refused by name rather than quietly emptying the column.
+| column | meaning |
+|---|---|
+| `class_id` | the id a column's `class` names |
+| `label` | the heading it prints under |
+| `order` | the order the classes are listed in |
+| `soc_categories` | the study categories that roll into the class, separated by `\|` (or `;`, never a comma - a category name may hold one). A category the study does not write stops the load, naming the ones it does |
+| `requires_drug` | optional: one drug abbreviation that narrows the categories to the lines whose regimen holds it, where the study's vocabulary does not separate a heading. It needs a category to narrow |
+| `note` | what the class holds, for a reader |
 
-Two consequences the tables state rather than hide. `BCMA` holds the cell
-therapies and `Bi-specific` holds both bispecific categories, so the columns are
-disjoint and a patient is counted once. And the transplant-only lines belong to
-no column at all, so the class columns do not sum to `Overall`.
+`OVERALL` is the column total, every line, and maps no category. A class mapped
+to no category is not an empty column: every cell in it is reported unfilled
+with that reason, since a zero would claim nobody is in it (`POM_TRIP` is one:
+the study has no pomalidomide category).
+
+`BCMA` holds the cell therapies and `Bi-specific` both bispecific categories,
+so the columns are disjoint and a patient is counted once. The transplant-only
+lines belong to no class, so the class columns do not sum to `Overall`.
 
 ## What a column can be cut by
 
-A row can only be cut the way the table it reads is cut.
+A row can only be cut the way the table it reads is cut. The columns that
+cannot be filled are left in place: they state what the shell specifies, and
+`tfls_unfilled.csv` names the table that cannot answer it.
 
-**By regimen class: yes.** `S_SAFETY_RATES`, `S_HCRU_RATES`,
-`S_MALIGNANCY_RATES` and `S_TX_ATTRITION` are written once for each line as a
-whole and once per SOC category, so an Overall column reads the line's own row
-and a class column reads its categories. A class mapped to one category is that
-category; a class mapped to two - `Bi-specific`, `Other` - is the two counts
-added, which is exact because the categories partition the line and the package
-checks that they do. A **rate** over more than one category is refused rather
-than invented: a rate is not the sum of its strata's rates.
+**Tables of totals.** `S_SAFETY_RATES`, `S_HCRU_RATES`, `S_MALIGNANCY_RATES`
+and `S_TX_ATTRITION` are written once for each line as a whole, once per SOC
+category and once per `AGE_GROUP` (`<75`, `75+`, the protocol's two groups -
+not `S_DEMOGRAPHICS.AGE_BAND`'s four descriptive bands). An Overall column reads
+the line's own row and a class column reads its categories; a class over two
+categories is the two counts added, which is exact because the categories
+partition the line. A **rate** over more than one stratum is refused rather than
+invented: a rate is not the sum of its strata's rates. The two stratifications
+are **margins**, not a cross: a column names a class or an age, and the other
+stays at the line's own row. Nothing else cuts these tables, so a neuropathy or
+frailty column against one reads as not filled.
 
-**By age: yes, on the same four tables.** They carry an `AGE_GROUP` column
-written the same way - `<75` and `75+`, the protocol's own stratification, and
-not the four descriptive bands `S_DEMOGRAPHICS.AGE_BAND` carries for Table 1.
-The grouping is the point: a column covering several strata is their counts
-added, which is exact, but a RATE is not the sum of its strata's rates, so an
-age group spread over three bands could report a count and never a rate.
-Neuropathy and frailty are not there: those stay a set of patients, so a column
-naming one against an aggregated table reads as not filled and says so.
+**Per-patient tables** - demographics, comorbidity, frailty, periods, SOC and
+the time-to-event outcomes - take any class and subgroup. That is the whole of
+T1, T1b, T4, T5c and most of T3. A class column has to name a line, since the
+study assigns a category to a line. A per-patient table that names no line of
+its own learns which patients are on the column's line from `S_SOC`; a run that
+skipped the SOC module has no `S_SOC`, and then the line comes from
+`S_LOT_PERIODS` (the same lines, dropping one whose period is empty), so an
+Overall column fills either way. A class column still needs `S_SOC`.
 
-The two stratifications are **margins**, not a cross. A column names a regimen
-class or an age, and the other stratification stays at the line's own row, so
-the categories add up to the line and so do the age groups.
+### Subgroups
 
-A subgroup names its table (`S_DEMOGRAPHICS:AGE_GROUP=<75&SEX=Male`) or
-leaves it out (`AGE_GROUP=<75&SEX=Male`), and then each condition is read on
-the one per-patient table that carries its column - `AGE_YEARS<65` is
-`S_DEMOGRAPHICS:AGE_YEARS<65`, whatever row it sits under, for the fill and
-the suppression alike. A column two such tables carry (`TTE_ELIGIBLE`, on
-`S_PERIODS` and `S_TTE`) or none does has to be qualified, and the load says
-so. The tables a subgroup may be read on are the ones the code describes -
-the per-patient tables the study writes, `S_ELIGIBILITY`, `S_COHORT` and the
-input cohort table under any of its three names - with the columns each
-carries; any other table or column stops the load, because what its cells
-add up to beside the other columns could not be told. Either way every
-condition applies: the men under 75, whichever order they are written in.
-The fill and the suppression read a subgroup from one set of conditions, a
-named subgroup's included: `NEUROPATHY=YES&HAS_HISTORY=0` is one neuropathy
-row with a history of 1 and of 0, which is nobody, exactly as written out.
-A regimen class is read the same way, as the S_SOC rows of its line in its
-categories, so `ACD38_TRIP` and `S_SOC:LOT_NUM=1&SOC_CATEGORY=Triplet with
-anti-CD38 backbone` on line 1 are one population. S_SOC conditions written
-beside a class are that same row only where they fix the class's own line;
-on another line, or on any line, they are a second row of the patient, and
-the column stops the load. A condition read off
-another cohort-specific table is carried back with its cohort: under 75
-across 1L and 2L is each patient's rows in the cohort where they were under
-75, not every row of a patient who was under 75 in either. Conditions that land on the same table
-are met by the same row of it - `CONCEPT=neuropathy&HAS_HISTORY=1` is a history
-of neuropathy, not a neuropathy row beside some other concept's history - and
-that table is read for the column's own cohort, since demographics are taken at
-each cohort's index: a 2L column's under-75 are the patients under 75 at 2L.
+**Syntax.** `[TABLE:]CONDITION[&CONDITION...]`, with `&` or `;` between
+conditions, all of which apply, in any order. A condition compares a column with
+a value (`=`, `!=`, a list with `|`) or with one number or date (`<`, `<=`,
+`>`, `>=`). A date is compared as its day number, so `INDEX_DATE>=2020-01-01`
+and `INDEX_DATE>=18262` are the same, whether the run's dates arrive typed or
+as text. Two conditions on one column must make one list or one range
+(`AGE_YEARS>=65&AGE_YEARS<75`). A condition with nothing to compare, or a range
+against a word or a list, stops the load.
 
-A subgroup that names its table is read off that table, for the column's
-cohort, and selects patients: `S_LOT_PERIODS:LOT_NUM=3` is the patients who
-went on to a third line, whatever `LOT_NUM` means in the table the row reads.
-Two exceptions answer it from the rows being summarised: a table of totals,
-which has no patient to look up, answers the one subgroup it is written by -
-the rate tables are cut by the protocol's age group, so
-`S_DEMOGRAPHICS:AGE_GROUP=<75` is read off their own `AGE_GROUP`, and any
-other table or column named on a table of totals is refused - and rows of
-the named table itself, which are filtered as rows - T3's columns are the
-interval each malignancy fell in, not the patients who had one there. So to
-select patients by something kept in the table a row reads, use the named
-subgroup: T1b's neuropathy columns are `NEUROPATHY=YES` and `NEUROPATHY=NO`,
-because its comorbidity rows read `S_COMORB_SUBGROUP` too.
+**Which table a condition is read on.** A subgroup that names its table is read
+on that table. Left unqualified, each condition is read on the one per-patient
+table that carries its column, among `S_DEMOGRAPHICS`, `S_COMORBIDITY`,
+`S_COMORB_SUBGROUP`, `S_FRAILTY`, `S_SOC`, `S_PERIODS` and `S_TTE` -
+`AGE_YEARS<65` is `S_DEMOGRAPHICS:AGE_YEARS<65` whatever row it sits under. A
+column two of them carry (`TTE_ELIGIBLE`, on `S_PERIODS` and `S_TTE`) or none
+does has to be qualified, and the load says so.
 
-A named subgroup - `NEUROPATHY`, `FRAILTY`, `AGE` - is asked for with `=` and
-one of its values (`YES`/`NO`, or `LT75`/`GE75`); anything else stops the
-load. It is read off its own table and nothing else, so `NEUROPATHY=YES`,
-`NEUROPATHY=Y` and `S_COMORB_SUBGROUP:CONCEPT=neuropathy&HAS_HISTORY=1` are
-one population. A subgroup condition compares with a value (`=`, `!=`, a list
-with `|`) or with one number or date (`<`, `<=`, `>`, `>=`; a date is its
-day number, `INDEX_DATE>=2020-01-01` and `INDEX_DATE>=18262` alike, whether
-the run reads dates typed or as text); two conditions on one
-column must make one list or one range (`AGE_YEARS>=65&AGE_YEARS<75`). A
-condition with nothing to compare, or a range against a word or a list, stops
-the load, because the suppression could not tell what its cells add up to.
-A regimen-class column may join classes, but not a class a drug refines
-with one no drug refines: the drug would be required of both.
+**Registered tables.** A subgroup may be read only on the tables
+`TFLS_TABLE_GRAIN` in `R/fill.R` lists - those seven, `S_LOT_PERIODS`,
+`S_MALIGNANCY`, `S_ELIGIBILITY`, `S_COHORT`, and the input cohort table as
+`COHORT_TABLE`, `INPUT_COHORT` or `INPUT_COHORT_TABLE` - and only on the columns
+listed there for each. Any other table or column stops the load, because what
+its cells add up to beside the other columns could not be told.
 
-A column's cohort, line and period are each read one way, by selection, by
-the suppression and everywhere else: a line is a whole number from 1, so `1`
-and `01` are one line and `2|1` is `1|2`, and a cohort or a period is a name
-taken without regard to case or order. A line that is not a number stops the
-load.
+**One row, one cohort.** Conditions that land on the same table are met by the
+same row of it: `S_COMORB_SUBGROUP:CONCEPT=neuropathy&HAS_HISTORY=1` is a
+history of neuropathy, not a neuropathy row beside some other concept's
+history. That table is read for the column's own cohort - demographics are
+taken at each cohort's index, so a 2L column's under-75 are the patients under
+75 at 2L - and a condition read off another cohort-specific table is carried
+back with its cohort.
 
-A mean, a median or a minimum and maximum prints values of its column, so
-none of them may summarise an identifier (`PATID` and the rest of the
-identifier list): the smallest and largest `PATID` of thirty patients are two
-patients' ids. Such a row stops the load, and is refused if it reaches a fill
-another way. Counting patients (`n`, `n_distinct`) is what an identifier is
-for, and stays.
+**A named table selects patients.** `S_LOT_PERIODS:LOT_NUM=3` is the patients
+who went on to a third line, whatever `LOT_NUM` means in the table the row
+reads. Two exceptions answer from the rows being summarised instead:
 
-Everything reading a per-patient table - demographics, comorbidity, frailty,
-periods, SOC and the time-to-event outcomes - takes both. That is the whole of
-T1, T1b, T4, T5c and most of T3.
+- rows of the named table itself are filtered as rows - T3's columns
+  (`S_MALIGNANCY:LOT_AFTER_WHICH=1`) are the interval each malignancy fell in,
+  not the patients who had one there;
+- a table of totals has no patient to look up, so it answers only the subgroup
+  it is written by: `S_DEMOGRAPHICS:AGE_GROUP=<75` (or `AGE_GROUP=<75`) is read
+  off its own `AGE_GROUP` column, and any other table or column named against a
+  table of totals is refused.
 
-A per-patient table that names no line of its own - the baseline
-characteristics - learns which patients are on a line from `S_SOC`. A run that
-skipped the SOC module wrote no `S_SOC`, and there the line comes from
-`S_LOT_PERIODS` instead: the same lines, bounded the same way, a line that
-starts after the cohort's follow-up ended being the one whose period is empty.
-So an Overall column fills either way. A class column still needs `S_SOC`,
-because only that table says which class a line is, and says so in
-`tfls_unfilled.csv` when it is missing.
+To select patients by something kept in the table a row reads, use a named
+subgroup, which is always patients: T1b's neuropathy columns are
+`NEUROPATHY=YES` and `NEUROPATHY=NO`, because its comorbidity rows read
+`S_COMORB_SUBGROUP` too.
 
-The columns that cannot be filled are left in place: they state what was asked
-for, and `tfls_unfilled.csv` names the table that cannot answer it.
+**Named subgroups.** `NEUROPATHY` and `FRAILTY` take `=YES` or `=NO` (`Y`/`N`,
+`TRUE`/`FALSE`, `1`/`0`), `AGE` takes `=LT75` or `=GE75` (`<75`, `75+`); anything
+else stops the load. Each is its own table's conditions and nothing else:
+`NEUROPATHY=YES` is `S_COMORB_SUBGROUP:CONCEPT=neuropathy&HAS_HISTORY=1`,
+`FRAILTY=YES` is `S_FRAILTY:FRAIL=1`, `AGE=LT75` is
+`S_DEMOGRAPHICS:AGE_YEARS<75`. Written beside other conditions they are one
+set: `NEUROPATHY=YES&HAS_HISTORY=0` is one row with a history of 1 and of 0,
+which is nobody.
+
+**Classes are S_SOC conditions on one line.** A class is the `S_SOC` row of the
+column's line in the class's categories (holding its drug, where it names one),
+so `ACD38_TRIP` on line 1 and `S_SOC:LOT_NUM=1&SOC_CATEGORY=Triplet with
+anti-CD38 backbone` are one population. `S_SOC` conditions in a subgroup beside
+a class are that same row only where they fix `LOT_NUM` to the class's own
+line; on another line, or on any line, they are a second row of the patient,
+and the column stops the load. A column may join classes with `|`, but not a
+class a drug refines with one no drug refines, nor two refined by different
+drugs.
+
+**Cohort, line and period** are each read one way, by the fill, the
+suppression and everything else: a line is a whole number from 1, so `1` and
+`01` are one line and `2|1` is `1|2`; a cohort or a period is a name, taken
+without regard to case or order. A line that is not a number stops the load.
+
+**Identifiers.** `mean_sd`, `median_iqr` and `min_max` print values of their
+column, so none of them may summarise an identifier (`PATID`, `PAT_PLANID`,
+`PATIENT_ID`, `MEMBER_ID`, `CLMID`, `PERSON_ID`, `MRN`): the smallest and
+largest `PATID` of thirty patients are two patients' ids. Such a row stops the
+load. Counting patients (`n`, `n_distinct`) is what an identifier is for.
+
+### The overlap contract
+
+Over one population - the columns of one cohort, line and period - two columns
+that constrain a common quantity must either be unable to share a patient, or
+constrain the same quantities with one inside the other. A quantity is a
+column, or one of the groups `TFLS_DIMENSIONS` in `R/fill.R` lists: an age
+(`AGE_YEARS`, `AGE_GROUP`, `AGE_BAND`, year of birth), a sex (`SEX`, `GDR_CD`),
+a regimen class (a class, or `SOC_CATEGORY`, `REGIMEN`, `N_AGENTS` on
+`S_SOC`), and so on. Anything else stops the load, because the patients in
+both columns are the two less what they cover together: under 75 and 65 or
+over, 60 each of 100, give away the 20 aged 65 to 74. The same holds for 65 or
+over "of any sex" beside under 75, and for quadruplets-or-triplets beside
+triplets-or-doublets, whether each is a class or its categories written out on
+`S_SOC`. Columns on different quantities - age beside frailty, a class beside a
+subgroup - share none and are not held to it.
+
+A set of columns that overlaps in more than 256 ways over one population is
+more splits than the suppression closes, and stops the load.
 
 ## Disclosure
 
@@ -287,148 +353,129 @@ Every cell goes through the same small-cell rule the study package applies, at
 the same floor, and nothing here can publish a number the package would have
 withheld.
 
-- A cell whose denominator is under the floor is suppressed, and so is the
-  count it was computed from. The default floor is 25, the protocol's, and
-  `TFLS_MIN_N` can only raise it.
-- **A survival curve publishes two counts, whatever the row prints**: the
-  patients with the event, in `N`, and the patients censored, which is `DENOM`
-  less `N`. Both have to reach the floor, for every statistic read off the
-  curve - the events and censored rows, and the median and the probabilities
-  too, whose `N` is the curve's events. A median over 30 patients of whom 3 had
-  the event is withheld. (A *rate* is not a curve and keeps the package's own
-  rule: it is suppressed on its at-risk count, and the events inside a large
-  population are published.)
-- **A curve goes whole.** When any cell of one column's curve is withheld —
-  by the floor, or to protect another cell — its events, censored, median and
-  probabilities are all withheld. Events and censored add up to the curve's
-  population. So a withheld events count printed beside its censored count
-  (and the `DENOM` that carries the population) is simply the one less the
-  other, and the sum across the classes then gives up the class the floor
-  withheld in the first place. For the same reason, where a sum needs one
-  more cell withheld, it takes a class whose curve is already going, so the
-  events row and the censored row give up the same class.
-- **A number printed twice is one number.** The same row over the same
-  population - a shell that repeats a row, or T1b, whose `Overall` columns and
-  rows are T1's, or a class named once by its id and once by the category it
-  maps to, or a subgroup spelled two ways (`NEUROPATHY=YES` and `=Y`,
-  `AGE=LT75` and `S_DEMOGRAPHICS:AGE_YEARS<75`, a class and its categories
-  written out) - counts once in every sum and
-  is withheld in every place it appears or in none. Counted twice, two printed
-  copies summed past their total and the sum was taken for no sum at all, and
-  a copy printed in one table printed what the other withheld.
-- **A row whose own filter narrows its column's population** -
-  `TTE_ELIGIBLE=1` - leaves out patients that every unfiltered row of the same
-  population still counts. The ones it leaves out are a number a reader can
-  take, so they reach the floor or the row is withheld.
-- **A sum gives away whatever its printed terms leave out**, so what they leave
-  out has to reach the floor: one withheld cell, two withheld cells that add up
-  to 12, or patients no term counts at all. The sums are read off the shells:
-  a subtotal and the rows indented under it; the column's denominator against
-  the rows that divide it; and a population against the columns that split it
-  - `Overall` against its regimen classes, and against its subgroups. That
-  last kind is read **across tables** as well as within one: T5c has no
-  `Overall` of its own, and its age columns for a line split T4's `Overall` for
-  that line, row for row, and a split whose levels sit in two tables is still
-  one split. Rows are matched on what they read, not on how a
-  shell spells it: `s_tte` or `S_TTE`, `TTNT` or `TTNT_MONTHS`, spaces or none.
-  Columns are matched on what they select, not how they are written: the
-  levels of a split are the subgroups that cannot share a patient -
-  `AGE_YEARS<75` and `AGE_YEARS>=75`, `FRAIL=1` and `FRAIL=0` - and, for one
-  line of one cohort, the classes with no category in common. That is
-  decided at the level a cell counts, patients: two values of a column are
-  two sets of patients only on a table with one row per patient in the
-  column's cohort, so a history of lung disease and a history of
-  neuropathy, two rows of `S_COMORB_SUBGROUP`, are not a split, while yes and
-  no within one concept are. A table or column the code does not describe is
-  never taken for one. A part inside another part is a sum too, with the rest
-  of the larger part as its unknown - under 65 inside under 75, T3's "after 2L
-  but before 3L" inside "after 2L+ anytime", a lone subgroup inside its
-  `Overall` - and every population is closed over every part inside it on
-  its own, so a column added beside them never takes that away. Such a sum,
-  and a split whose levels leave a gap (under 65 and 85 and over), need not
-  add up exactly, so it withholds only when what it leaves out is under the
-  floor. A split is exact - one withheld level read off the rest - only
-  where its levels cover their column: every value the column can take
-  (`NEUROPATHY=YES` and `=NO`), a value and its complement (`X=a` and
-  `X!=a`), or ranges with no gap; patients with no value - a NULL, the
-  study's `Unknown` age or sex - are left out of that, as they always were,
-  so `<75` and `75+` are the whole of `AGE_GROUP`. `AGE_BAND` 65-74 and 75+
-  leave the younger bands out, so they are closed on what they leave out.
-  Over one population, two columns that constrain a common quantity - an
-  age, whether written as `AGE_YEARS`, `AGE_GROUP` or `AGE_BAND`; a sex, as
-  `SEX` or `GDR_CD`; a regimen class - must either be unable to share a
-  patient, or constrain the same quantities with one inside the other.
-  Anything else stops the load: the patients in both are the two less what
-  they cover together, so under 75 and 65 or over (60 + 60 - 100) give away
-  the 20 aged 65 to 74, and so do 65 or over "of any sex", and the
-  quadruplets-or-triplets beside the triplets-or-doublets, whether each is
-  a class or its categories written out on S_SOC. Every split is found -
-  the search is complete, and does not depend on the order of the columns -
-  and a shell whose columns overlap in more ways than the search closes (256
-  over one population) stops at load.
-  Every statistic takes part in a split, not only the
-  counts, because every printed cell carries its population in `DENOM` and
-  populations add up. The closing repeats until no sum is short, then runs
-  once more over all the tables together.
-- **This withholds more than the rule it replaced, on purpose.** The old rule
-  published two withheld levels beside a third - White 30 of 40, with the two
-  levels of 5 withheld - on the ground that nothing isolated either one; but
-  40 - 30 put the ten non-White patients on the page, which is the disclosure
-  the same rule refused for "ten men" one section up. And the regimen classes
-  do not exhaust a line - transplant-only lines belong to no class - so
-  `Overall` less the classes is a count of those patients, and it is floored
-  like any other. On a full run, where that remainder is small, expect the
-  smallest class column of the line to be withheld on many rows.
-- **Still for the disclosure reviewer**, because the shells draw no sum that
-  would close them: consecutive steps of the sample-selection funnel (F1)
-  differ by the patients one step removes; `min`/`max` rows print single
-  patients' values; the `REASON` column says which withheld cell was the small
-  one and which went only to protect it; and a curve cell refused as "past the
-  observed follow-up" names that population's longest follow-up.
-- A suppressed cell prints as `<25` (or the floor in force), never as a blank
-  that could be read as zero.
-- Nothing patient-level is read or written. No identifier reaches `out/`.
-- Where the run published a `_RELEASE` table, that is what is read, so the
-  suppression is the package's own and not a second opinion of it. A released
-  table left by an earlier run is not preferred, because a run that did not run
-  the release module did not publish one. And where the run says it published
-  one and it is not there, or is there with no rows, nothing is read at all:
-  the raw table is not a substitute for the copy meant to replace it, and the
-  unfilled list says which of the two it was.
-- **And where the run's own record says its release left a cell recoverable,
-  that table is not read here either.** `mod_release()` withholds every cell
-  under the floor and then records what it could not close — the groups where
-  one withheld cell is still the group's total less the published rest — in
-  `S_RUN_METADATA.RELEASE_RECOVERABLE`, with the tables it is about in
-  `RELEASE_RECOVERABLE_TABLES`. Filling a shell at a higher floor does **not**
-  close that: the subtraction is inside the released copy this reads *from*,
-  and it happened before anything here looked. Nor is the raw table a way
-  round it — that holds everything the release was run to remove. So the rows
-  resting on such a table are reported unfilled, in the run's own words.
+**The floor.**
 
-  Four answers, and the run says which on screen before a shell is filled:
+- The floor is 25, the protocol's. `TFLS_MIN_N` can only raise it.
+- A cell whose denominator is under the floor is withheld, and so is the count
+  it was computed from. A cell whose denominator cannot be counted is withheld
+  too.
+- Where the cell is itself a count of patients - `n`, `n_pct`, and the patients
+  a mean, median or minimum and maximum was taken over - that count reaches the
+  floor too. A *rate* keeps the package's own rule: it is suppressed on its
+  at-risk count, and the events inside a large population are published.
+  `n_distinct` counts values, not patients, and goes with its population.
+- **A survival curve publishes two counts, whatever the row prints**: the
+  patients with the event, in `N`, and the patients censored, `DENOM` less `N`.
+  Both reach the floor for every statistic read off the curve - the events and
+  censored rows, the median and the probabilities. A median over 30 patients of
+  whom 3 had the event is withheld.
+- **A row whose own filter narrows its column's population** (`TTE_ELIGIBLE=1`)
+  leaves out patients that every unfiltered row of the same population still
+  counts; those left out reach the floor or the row is withheld.
+- A withheld cell prints as `<25` (or the floor in force), never as a blank
+  that could be read as zero.
+
+**Relations.** A withheld cell is no secret when it is the last unknown in a
+sum whose other terms are printed. The sums are read off the shells:
+
+- a subtotal and the rows indented one step under it;
+- the levels in one column and section against the column's denominator;
+- a population against the columns that split it - `Overall` against its
+  regimen classes and against its subgroups - in one table **or across tables**:
+  T5c has no `Overall` of its own, and its age columns for a line split T4's
+  `Overall` for that line, row for row. Between tables rows are matched on what
+  they read (statistic, source, measure, filter), not on spelling: `s_tte` or
+  `S_TTE`, `TTNT` or `TTNT_MONTHS`.
+
+Columns are matched on what they select, not how they are written. The levels
+of a split are the subgroups that cannot share a patient (`AGE_YEARS<75` and
+`AGE_YEARS>=75`, `FRAIL=1` and `FRAIL=0`) and, for one line of one cohort, the
+classes with no category in common. That is decided in patients: two values of
+a column are two sets of patients only on a table with one row per patient in
+the column's cohort, so a history of lung disease and a history of neuropathy,
+two rows of `S_COMORB_SUBGROUP`, are not a split, while yes and no within one
+concept are. A table or column the code does not describe is never taken for
+one. A part inside another part is a sum too, with the rest of the larger part
+as its unknown - under 65 inside under 75, T3's "after 2L but before 3L" inside
+"after 2L+ anytime", a lone subgroup inside its `Overall` - and every population
+is closed over every part inside it on its own. Every statistic takes part in a
+split, not only the counts, because every printed cell carries its population in
+`DENOM` and populations add up.
+
+**A number printed twice is one number.** The same row over the same population
+counts once in every sum and is withheld in every place it appears or in none:
+a shell that repeats a row, T1b's `Overall` columns and rows (which are T1's),
+a class named once by its id and once by its categories, a subgroup spelled two
+ways (`NEUROPATHY=YES` and `=Y`, `AGE=LT75` and `S_DEMOGRAPHICS:AGE_YEARS<75`).
+
+**Closure.** What a sum's printed terms leave out has to reach the floor: one
+withheld cell, two withheld cells that add up to 12, or patients no term counts
+at all. A split is exact - one withheld level is the total less the rest - only
+where its levels cover their column: every value it can take (`NEUROPATHY=YES`
+and `=NO`), a value and its complement (`X=a` and `X!=a`), or ranges with no
+gap. Patients with no value - a NULL, the study's `Unknown` age or sex - are
+left out of that, so `<75` and `75+` are the whole of `AGE_GROUP`. A nested
+part, or a split that leaves a gap (`AGE_BAND` 65-74 and 75+ leave the younger
+bands out), withholds only when what it leaves out is under the floor. Where a
+sum needs one more cell withheld it takes its smallest printed term, preferring
+a cell whose curve is already going.
+
+**A curve goes whole.** When any cell of one column's curve is withheld - by the
+floor, or to protect another cell - its events, censored, median and
+probabilities all are: events and censored add up to the curve's population, so
+either one printed gives the other away.
+
+The closing repeats until no sum is short, then runs once more over all the
+tables together. Because the regimen classes do not exhaust a line
+(transplant-only lines belong to none), `Overall` less the classes is a count
+of those patients and is floored like any other: on a full run, expect the
+smallest class column of a line to be withheld on many rows.
+
+**Still for the disclosure reviewer**, because the shells draw no sum that would
+close them: consecutive steps of the sample-selection funnel (F1) differ by the
+patients one step removes; `min`/`max` rows print single patients' values; a
+curve cell refused as "past the observed follow-up" says that population's
+longest follow-up is shorter than the month asked for. The `REASON` column of each `tfls_<table>.csv` says which
+withheld cell was the small one and which went only to protect it.
+
+**What is read.**
+
+- Nothing patient-level is read into a cell or written. Every file is checked
+  for identifier columns on the way out.
+- Where the run published a `_RELEASE` table, that is what is read, so the
+  suppression is the package's own. A released table left by an earlier run is
+  not preferred. Where the run says it published one and it is not there, or is
+  there with no rows, nothing is read at all - the raw table is not a substitute
+  for the copy meant to replace it - and the unfilled list says which.
+- **Where the run's own record says its release left a cell recoverable, that
+  table is not read either.** `mod_release()` withholds every cell under the
+  floor and records the groups where one withheld cell is still the group's
+  total less the published rest, in `S_RUN_METADATA.RELEASE_RECOVERABLE`, with
+  the tables it is about in `RELEASE_RECOVERABLE_TABLES`. Filling a shell at a
+  higher floor does not close that - the subtraction is inside the released
+  copy this reads from - and the raw table holds everything the release was run
+  to remove. So the rows resting on such a table are reported unfilled, in the
+  run's own words. The run says which case applies on screen before a shell is
+  filled:
 
   | the run's record says | these shells |
   |---|---|
   | `none` | fill from everything |
-  | a finding | fill from everything except the tables `RELEASE_RECOVERABLE_TABLES` names — or, where that list is absent or names anything that is not one of the seven released tables, except all seven |
-  | `release module did not run` | fill from nothing that would have had a released copy: that run has not been shown to have no recoverable cell, it has not looked |
-  | nothing at all | fill from everything, and say so: that is the snapshot job's gate, and re-exporting through it is what settles it |
+  | a finding | fill from everything except the tables `RELEASE_RECOVERABLE_TABLES` names. Where that list is absent or names anything that is not one of the seven released tables, the finding's own text decides: the released tables it names, or all seven where it names none |
+  | `release module did not run` | fill from nothing that would have had a released copy: that run has not been shown to have no recoverable cell |
+  | nothing at all | fill from everything, and say so: the snapshot job is the check for that case, and re-exporting through it is what settles it |
 
   `TFLS_ALLOW_RECOVERABLE=TRUE` fills them anyway and prints that it did. The
-  dashboard and the snapshot job each carry the same switch under their own
-  name, because each is a separate way a run reaches people and none of them
-  has been through the others.
+  dashboard (`DASH_ALLOW_RECOVERABLE`) and the snapshot job
+  (`SNAPSHOT_ALLOW_RECOVERABLE`) each carry the same switch under their own
+  name, because each is a separate way a run reaches people.
 
 The tables are counts over a claims database and carry its limits: a code is
 evidence of a claim, not of a diagnosis, and an absence is evidence of neither.
 
 ## The same shells in the dashboard
 
-The dashboard's **Tables** tab fills these shells from whichever scenario is
-selected, so the table, the scenario and the floor are controls and a shell can
-be watched to move as a definition moves. It reads this folder - `DASH_TFLS_DIR`
-names it where the two are not side by side - and nothing is duplicated there:
-the loader, the statistics and the suppression are the ones in `R/`. A toggle
-lists the rows nothing could fill under the table, with the same reason
-`tfls_unfilled.csv` gives, so a gap is visible rather than blank.
+The dashboard's **Tables** tab fills these shells from the scenario selected,
+with this folder's own code and the dashboard's reader; `DASH_TFLS_DIR` names
+this folder where the two are not side by side. `dashboard/DASHBOARD.md`
+"The Tables tab is the requested shells, filled" describes it.

@@ -260,7 +260,7 @@ melp_decision_ctes <- function(cfg, line_tbl, start_col, span_end, induction_end
     --
     -- The test is an intervening line-defining agent, not a gap: a course long
     -- after the drugs ran out is still this line's when nothing happened in
-    -- between, which is the request's own case (SE). Same candidate gate as
+    -- between, which is scenario SE's case. Same candidate gate as
     -- melp_confirm below, so ownership and confirmation cannot disagree about
     -- what counts as an agent.
     --
@@ -343,9 +343,9 @@ melp_decision_ctes <- function(cfg, line_tbl, start_col, span_end, induction_end
       --
       -- A course whose cover ran out before this line began has no dose in it
       -- and belongs to an earlier line, so this line does not judge it.
-      -- Unbounded, every later line re-judged it against its own window. Two
-      -- defects followed: the fold-in lost the course as a returning drug's
-      -- previous dose (F36/F36c), and the hold gave a transplant line a
+      -- Unbounded, every later line would re-judge it against its own window:
+      -- the fold-in would lose the course as a returning drug's
+      -- previous dose (F36/F36c), and the hold would give a transplant line a
       -- run-out before its own start, which QC check B7 calls a failure
       -- (SU1/SU2).
       WHERE mc.EXPO_DT <= {span_end}
