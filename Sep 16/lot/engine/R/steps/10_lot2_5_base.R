@@ -405,7 +405,7 @@ build_lot_n <- function(con, lot_num,
         --
         --   an ALLOGENEIC previous line owns nothing. Its window END is its
         --   start date, so an AUTO on the allograft date reads as inside it,
-        --   but 4.6 gives that line one day and nothing reaches it. Shipped
+        --   but 4.6 gives that line one day and nothing reaches it. Bundled
         --   check E5 calls the result a failure.
         --
         -- Deliberately NOT the wider reading, that a tandem holds the previous

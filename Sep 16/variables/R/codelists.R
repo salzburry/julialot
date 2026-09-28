@@ -2,7 +2,7 @@
 #
 # Every code list this package needs is a CSV under CODELIST_DIR, and none of
 # them is in version control. Four have no codes yet: they come out of the
-# protocol's Annex 2, Annex 3 and Annex 7 (../CODELISTS.md).
+# protocol's Annex 2, Annex 3 and Annex 7 (../DATA_MAPPING.md, "Code lists").
 #
 # The guard: a code list that exists but is UNFILLED stops the module that
 # needs it. A rate of zero for want of a code list is indistinguishable in
@@ -36,7 +36,7 @@ CODELIST_SPEC <- list(
   "cl_mma_rollup.csv"         = c("CL_MEDICATION_FULL", "CL_MED_CLASS",
                                   "CL_MED_ABBR"),
   "cl_sct_codelist.csv"       = c("CL_CODE_TYPE", "CL_CODE", "SCT_TYPE"),
-  # To be authored. ../CODELISTS.md section 4 proposes each shape.
+  # To be authored. ../DATA_MAPPING.md, "The files this package reads", has each shape.
   "safety_events.csv"         = c("condition", "domain", "acute_chronic",
                                   "code_type", "code", "icd_family"),
   "secondary_malig.csv"       = c("category", "subtype", "code_type", "code",
@@ -105,7 +105,7 @@ load_codelist <- function(csv_name, cfg) {
     stop("CODELIST ERROR: ", path, " does not exist.",
          if (csv_name %in% names(CODELIST_SOURCE))
            paste0("\nIt comes from ", CODELIST_SOURCE[[csv_name]],
-                  " - see ../CODELISTS.md.")
+                  " - see ../DATA_MAPPING.md, \"Code lists\".")
          else "", call. = FALSE)
 
   md5 <- unname(tools::md5sum(path))
@@ -214,7 +214,7 @@ canonical_acute_chronic <- function(x, condition = NULL) {
 }
 
 # Where the code lists are. An unset CODELIST_DIR means this package's own
-# codelists/ - the folder ships every shape it reads, so it is complete without
+# codelists/ - the folder holds every shape it reads, so it is complete without
 # anything outside it. Production sets CODELIST_DIR to the real directory.
 resolve_codelist_dir <- function(cfg, here) {
   d <- if (nzchar(cfg$codelist_dir)) cfg$codelist_dir
@@ -227,7 +227,7 @@ resolve_codelist_dir <- function(cfg, here) {
 
 # Checked before any module runs, so a run that cannot finish stops in the
 # first second rather than after the expensive steps. Each list is LOADED
-# rather than stat-ed: codelists/ ships templates with the right columns and no
+# rather than stat-ed: codelists/ holds templates with the right columns and no
 # codes, which a path check would accept.
 #
 # MODULES=all asks for everything that CAN run: a module whose list is unusable

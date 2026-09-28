@@ -1192,16 +1192,16 @@ local({
             paste(cmd, collapse = "; "), ")"))
 })
 # R/scope.R does not restate the package's registry; it reads the contract
-# the package emits. The shipped COPY can still fall behind the registry, and
+# the package emits. The bundled COPY can still fall behind the registry, and
 # this is what stops that: regenerate from the package and compare.
 #
 # Byte-for-byte, not field-by-field. A field comparison passes a file that is
-# right in the fields it happens to check, and the point of shipping a
+# right in the fields it happens to check, and the point of bundling a
 # generated artefact is that it is the generator's output and nothing else.
 local({
   reg <- file.path(dirname(ROOT), "variables", "R")
   if (!all(file.exists(file.path(reg, c("registry.R", "contract.R"))))) {
-    cat("  --     the study package is not beside this folder, so the shipped",
+    cat("  --     the study package is not beside this folder, so the bundled",
         "contract is unchecked\n")
     return(invisible(NULL))
   }
@@ -1215,20 +1215,20 @@ local({
   tmp <- file.path(tempdir(), "tfls_contract_check.csv")
   on.exit(unlink(tmp), add = TRUE)
   pkg$write_study_contract(tmp)
-  shipped <- file.path(ROOT, TFLS_CONTRACT_FILE)
-  ok(file.exists(shipped), "the contract is shipped with this folder, so a snapshot fills where the package is not installed")
-  ok(identical(readLines(shipped, warn = FALSE), readLines(tmp, warn = FALSE)),
+  bundled <- file.path(ROOT, TFLS_CONTRACT_FILE)
+  ok(file.exists(bundled), "the contract is bundled with this folder, so a snapshot fills where the package is not installed")
+  ok(identical(readLines(bundled, warn = FALSE), readLines(tmp, warn = FALSE)),
      "...and it is exactly what the package emits today: regenerated here and compared line for line")
   # The one value the run records about it. Computed by two copies of one
   # function, so the two are held to agree on the same file, and to agree
   # with the value a run would have written.
-  ok(identical(contract_text_md5(shipped), pkg$contract_text_md5(shipped)) &&
-       identical(contract_text_md5(shipped), pkg$study_contract_md5()),
+  ok(identical(contract_text_md5(bundled), pkg$contract_text_md5(bundled)) &&
+       identical(contract_text_md5(bundled), pkg$study_contract_md5()),
      "...and hashes to the STUDY_CONTRACT_MD5 a run of that package records, by this folder's copy of the function and the package's")
   crlf <- file.path(tempdir(), "tfls_contract_crlf.csv")
   on.exit(unlink(crlf), add = TRUE)
-  writeBin(charToRaw(paste0(paste(readLines(shipped, warn = FALSE), collapse = "\r\n"), "\r\n")), crlf)
-  ok(identical(contract_text_md5(crlf), contract_text_md5(shipped)),
+  writeBin(charToRaw(paste0(paste(readLines(bundled, warn = FALSE), collapse = "\r\n"), "\r\n")), crlf)
+  ok(identical(contract_text_md5(crlf), contract_text_md5(bundled)),
      "...and the same contract with other line endings hashes the same, so a Windows copy is not refused")
 
   # And the three objects built from it are the package's own answers.
@@ -1252,7 +1252,7 @@ local({
 local({
   have <- tryCatch(contract_text_md5(file.path(ROOT, TFLS_CONTRACT_FILE)),
                    error = function(e) NA_character_)
-  ok(!is.na(have), "the shipped contract can be hashed the way a run records it")
+  ok(!is.na(have), "the bundled contract can be hashed the way a run records it")
   md_row <- function(...) data.frame(
     RUN_ID = "r1", STATE = "complete", UPDATED_AT = "2026-09-15 00:00:00",
     COHORTS = "1L; 2L", MODULES = "eligibility; spine; cohorts; release",
@@ -1265,7 +1265,7 @@ local({
              error = function(x) conditionMessage(x))
   }
   ok(identical(bind(md_row(STUDY_CONTRACT_MD5 = have)), "BOUND"),
-     "a run driven by the contract shipped here binds")
+     "a run driven by the contract bundled here binds")
   e <- bind(md_row(STUDY_CONTRACT_MD5 = "00000000000000000000000000000000"))
   ok(grepl("is not the one the run under here was driven by", e, fixed = TRUE) &&
        grepl("Nothing was filled", e, fixed = TRUE),
@@ -1346,7 +1346,7 @@ local({
      "a snapshot reads the metadata row as text, so an all-digit hash or run id is the string it was")
 })
 
-# Every way the shipped contract can be wrong, refused rather than read.
+# Every way the bundled contract can be wrong, refused rather than read.
 #
 # Read loosely - any RELEASED value that is not "1" taken as FALSE, blank keys,
 # a duplicate table, a truncated file - all four failures would push the SAME
@@ -1365,7 +1365,7 @@ local({
              error = function(e) conditionMessage(e))
   }
   ok(identical(with_contract(good), "READ"),
-     "the shipped contract reads")
+     "the bundled contract reads")
 
   maybe <- sub("^(safety,S_SAFETY_RATES),1,", "\\1,maybe,", good)
   ok(!identical(maybe, good) &&
@@ -1391,7 +1391,7 @@ local({
 
 cat("\n-- publishing one run's output over another's --\n")
 # Exercised with real files, not read as source text. This is the step that can
-# destroy a delivered TFL set, and the failure it has to survive is a PARTIAL
+# destroy a published TFL set, and the failure it has to survive is a PARTIAL
 # one: a move that works for four files and not the fifth.
 local({
   setup <- function(n_old = 3L, n_new = 3L) {
@@ -1993,7 +1993,7 @@ local({
   has <- function(x, s) any(grepl(s, x, fixed = TRUE))
 
   # A shell directory of our own, so a test can break a file without touching
-  # the shipped one.
+  # the bundled one.
   scratch_shells <- function(edit = function(f) invisible(NULL)) {
     d <- file.path(tempdir(), paste0("tfls_", sample.int(1e6, 1)))
     dir.create(d, showWarnings = FALSE, recursive = TRUE)
@@ -2007,10 +2007,10 @@ local({
     writeLines(c(readLines(p), line), p)
   }
 
-  cat("\n-- the shipped shells load --\n")
+  cat("\n-- the bundled shells load --\n")
   SH <- load_shells(SHELL_DIR)
   ok(nrow(SH$tables) > 0 && nrow(SH$rows) > 0 && nrow(SH$columns) > 0,
-     "the shells that ship with this folder load without complaint")
+     "the shells in this folder load without complaint")
   ok(all(SH$rows$table_id %in% SH$tables$table_id) &&
        all(SH$columns$table_id %in% SH$tables$table_id),
      "every row and column belongs to a declared table")
@@ -2505,9 +2505,9 @@ local({
             "none gives a withheld count back (", leaked, " did)"))
   ok(split == 0L, "...and in none is a curve printed in part")
 
-  # The shipped T4, filled end to end: the key the curves are grouped by is
+  # The bundled T4, filled end to end: the key the curves are grouped by is
   # the one fill.R writes, and the probabilities go with the counts.
-  SHIP <- load_shells(file.path(ROOT, "shells"))
+  SHELLS <- load_shells(file.path(ROOT, "shells"))
   cats <- c("Quadruplet with anti-CD38 backbone", "Triplet with anti-CD38 backbone",
             "Other triplet (non-anti-CD38)", "Doublet/monotherapy", "Other")
   size <- c(50, 80, 70, 60, 60); evn <- c(10, 50, 40, 25, 35)
@@ -2523,12 +2523,12 @@ local({
                     SOC_CATEGORY = pts$SOC_CATEGORY, REGIMEN = "X",
                     stringsAsFactors = FALSE)
   rd <- function(name) list(S_TTE = tte, S_SOC = soc)[[toupper(name)]]
-  t4 <- fill_all(SHIP, fill_context(rd, SHIP$classes), 25)[["T4"]]$cells
+  t4 <- fill_all(SHELLS, fill_context(rd, SHELLS$classes), 25)[["T4"]]$cells
   c1 <- t4[grepl("^1L_", t4$COLUMN_ID) & t4$FILLED == 1L & t4$SECTION == 0L, ]
   per_curve <- tapply(c1$SUPPRESSED, paste(c1$COLUMN_ID, c1$CURVE_KEY), function(x)
     length(unique(x)))
   ok(nrow(c1) > 0 && all(nzchar(c1$CURVE_KEY)) && all(per_curve == 1L),
-     "in the shipped T4 every 1L curve - counts, median and probabilities - is withheld whole or printed whole")
+     "in the bundled T4 every 1L curve - counts, median and probabilities - is withheld whole or printed whole")
   csv <- render_csv(list(cells = t4))
   ok(!"CURVE_KEY" %in% names(csv), "...and the key it is grouped by is not exported")
 
@@ -2552,7 +2552,7 @@ local({
        kr("km_events", "S_TTE", "TTNT", "SEX=Male") !=
          kr("km_events", "S_TTE", "TTNT", "SEX=male"),
      "...while another endpoint, another population, or a value in another case - which = compares as written - is another curve")
-  VAR <- SHIP
+  VAR <- SHELLS
   cz <- VAR$rows$table_id == "T4" & VAR$rows$stat == "km_censored"
   VAR$rows$source[cz] <- tolower(VAR$rows$source[cz])
   VAR$rows$measure[cz] <- paste0(tolower(VAR$rows$measure[cz]), "_months")
@@ -2563,7 +2563,7 @@ local({
     length(unique(x)))
   ok(sum(cz) > 0 && all(per_v == 1L) &&
        identical(sort(unique(v1$CURVE_KEY)), sort(unique(c1$CURVE_KEY))),
-     "the shipped T4 with its censored rows spelled another way still groups each curve whole")
+     "the bundled T4 with its censored rows spelled another way still groups each curve whole")
   vcsv <- render_csv(list(cells = tv))
   vq <- vcsv[vcsv$ROW_ORDER %in% 3:4 & grepl("^1L_", vcsv$COLUMN_ID), ]
   pop_q <- vq$DENOM[vq$COLUMN_ID == "1L_ACD38_QUAD"]
@@ -2583,7 +2583,7 @@ local({
 
 cat("\n-- a population split in another table --\n")
 local({
-  SHIP <- load_shells(file.path(ROOT, "shells"))
+  SHELLS <- load_shells(file.path(ROOT, "shells"))
   # 1L: 200 patients, 180 under 75 and 20 aged 75 or over. The 20 are under the
   # floor in T5c; T4's Overall less T5c's under-75 is exactly them.
   ids <- sprintf("P%03d", 1:200)
@@ -2596,17 +2596,17 @@ local({
                      AGE_GROUP = c(rep("<75", 180), rep("75+", 20)),
                      stringsAsFactors = FALSE)
   rd <- function(name) list(S_TTE = tte, S_DEMOGRAPHICS = demo)[[toupper(name)]]
-  ctx <- fill_context(rd, SHIP$classes)
+  ctx <- fill_context(rd, SHELLS$classes)
   row_of <- function(f, tid, col, label) {
     c <- f[[tid]]$cells
     c[c$COLUMN_ID == col & c$ROW_LABEL == label & c$SECTION == 0L, , drop = FALSE][1, ]
   }
-  alone <- fill_table(SHIP, "T5c", ctx, 25)
+  alone <- fill_table(SHELLS, "T5c", ctx, 25)
   under <- alone$cells[alone$cells$COLUMN_ID == "AGE_1L_LT75" &
                          alone$cells$ROW_LABEL == "Events, n (%)", ][1, ]
   ok(under$FILLED == 1L && under$SUPPRESSED == 0L,
      "T5c on its own publishes the under-75 curve: it has no Overall to be read against")
-  all_t <- fill_all(SHIP, ctx, 25)
+  all_t <- fill_all(SHELLS, ctx, 25)
   t4 <- row_of(all_t, "T4", "1L_OVERALL", "Events, n (%)")
   lt <- row_of(all_t, "T5c", "AGE_1L_LT75", "Events, n (%)")
   ge <- row_of(all_t, "T5c", "AGE_1L_GE75", "Events, n (%)")
@@ -2621,19 +2621,19 @@ local({
   ok(nrow(lt_all) > 0 && all(lt_all$SUPPRESSED == 1L),
      "...every statistic of it, the medians and probabilities included")
   both <- rbind(all_t[["T4"]]$cells, all_t[["T5c"]]$cells)
-  ok(no_lone_unknown(both, SHIP),
+  ok(no_lone_unknown(both, SHELLS),
      "no sum between the two tables is left with one member missing")
   keys_match <- intersect(all_t[["T4"]]$cells$ROW_KEY[all_t[["T4"]]$cells$SECTION == 0L],
                           all_t[["T5c"]]$cells$ROW_KEY[all_t[["T5c"]]$cells$SECTION == 0L])
   ok(length(keys_match) >= 27L,
-     "the shipped T4 and T5c read the same rows, so the two can be matched row for row")
+     "the bundled T4 and T5c read the same rows, so the two can be matched row for row")
 
   # The same match, whichever way T5c spells what it reads. The row key was
   # the text as written, so a T5c spelling its rows another way matched
   # nothing in T4: the under-75 stayed printed beside T4's Overall, and 200 -
   # 180 and 100 - 90 gave back the 20 patients and 10 events withheld.
   respelled <- function(field, fn) {
-    s <- SHIP
+    s <- SHELLS
     w <- s$rows$table_id == "T5c" & grepl("^km_", s$rows$stat)
     for (f in field) s$rows[[f]][w] <- fn[[f]](s$rows[[f]][w])
     s
@@ -2669,7 +2669,7 @@ local({
   # two withheld copies of the 75+ looked like two unknowns - and 200 - 180 and
   # 100 - 90 gave back the 20 and the 10.
   evonly <- function(respell) {
-    s <- SHIP
+    s <- SHELLS
     for (nm in c("tables", "columns", "rows"))
       s[[nm]] <- s[[nm]][s[[nm]]$table_id %in% c("T4", "T5c"), , drop = FALSE]
     s$rows <- s$rows[s$rows$stat == "km_events" & s$rows$measure == "TTNT", , drop = FALSE]
@@ -2712,9 +2712,9 @@ cat("\n-- the same number printed in two tables --\n")
 # withhold different levels of one variable, and each would print the level
 # the other withheld. They are withheld together.
 local({
-  SHIP <- load_shells(file.path(ROOT, "shells"))
+  SHELLS <- load_shells(file.path(ROOT, "shells"))
   for (nm in c("tables", "columns", "rows"))
-    SHIP[[nm]] <- SHIP[[nm]][SHIP[[nm]]$table_id %in% c("T1", "T1b"), , drop = FALSE]
+    SHELLS[[nm]] <- SHELLS[[nm]][SHELLS[[nm]]$table_id %in% c("T1", "T1b"), , drop = FALSE]
   set.seed(7)
   n <- 160
   ids <- sprintf("P%03d", seq_len(n))
@@ -2731,9 +2731,9 @@ local({
                    HAS_HISTORY = sample(0:1, n, TRUE, c(.8, .2)))
   rd <- function(name) list(S_DEMOGRAPHICS = demo, S_LOT_PERIODS = lp,
                             S_COMORB_SUBGROUP = cs)[[toupper(name)]]
-  f <- fill_all(SHIP, fill_context(rd, SHIP$classes), 25)
+  f <- fill_all(SHELLS, fill_context(rd, SHELLS$classes), 25)
   both <- rbind(f$T1$cells, f$T1b$cells)
-  units <- copy_units(both, SHIP)
+  units <- copy_units(both, SHELLS)
   spans <- vapply(units, function(u) length(unique(both$TABLE_ID[u])) == 2L, logical(1))
   ok(length(units) >= 11L && all(spans),
      paste0("T1 and T1b print ", length(units), " of the same cells, each once in either table"))
@@ -2789,13 +2789,13 @@ local({
   # T1b's comorbidity rows read S_COMORB_SUBGROUP, the table its neuropathy
   # columns named, so the lung row was filtered to neuropathy rows and came
   # back empty. The columns now ask for the named subgroup, which is patients.
-  SHIP <- load_shells(file.path(ROOT, "shells"))
-  ok(all(SHIP$columns$subgroup[SHIP$columns$table_id == "T1b" &
-                                 nzchar(SHIP$columns$subgroup)] %in%
+  SHELLS <- load_shells(file.path(ROOT, "shells"))
+  ok(all(SHELLS$columns$subgroup[SHELLS$columns$table_id == "T1b" &
+                                 nzchar(SHELLS$columns$subgroup)] %in%
            c("NEUROPATHY=YES", "NEUROPATHY=NO")),
      "T1b's neuropathy columns ask for the named subgroup")
   for (nm in c("tables", "columns", "rows"))
-    SHIP[[nm]] <- SHIP[[nm]][SHIP[[nm]]$table_id == "T1b", , drop = FALSE]
+    SHELLS[[nm]] <- SHELLS[[nm]][SHELLS[[nm]]$table_id == "T1b", , drop = FALSE]
   q <- sprintf("Q%03d", 1:200)
   cs2 <- rbind(
     data.frame(PATID = q, COHORT = "1L", LOT_NUM = 1L, CONCEPT = "neuropathy",
@@ -2806,7 +2806,7 @@ local({
                     PERIOD_START = as.Date("2020-01-01"), PERIOD_END = as.Date("2020-06-01"))
   rd2 <- function(n) list(S_COMORB_SUBGROUP = cs2, S_LOT_PERIODS = lp2,
                           S_DEMOGRAPHICS = data.frame(PATID = q, COHORT = "1L"))[[toupper(n)]]
-  fb <- fill_table(SHIP, "T1b", fill_context(rd2, SHIP$classes), 25)$cells
+  fb <- fill_table(SHELLS, "T1b", fill_context(rd2, SHELLS$classes), 25)$cells
   lung <- fb[grepl("^Lung", fb$ROW_LABEL) & fb$COLUMN_ID %in% c("1L_NEURO_YES", "1L_NEURO_NO"), ]
   ok(nrow(lung) == 2L && all(lung$FILLED == 1L),
      "...so T1b's lung-disease row is filled in both neuropathy columns, where it read as not filled")
@@ -2832,16 +2832,16 @@ cat("\n-- a class named two ways is one class --\n")
 # summed past Overall, the withheld pair looked like two unknowns, and
 # Overall less the quadruplets gave the triplets back.
 local({
-  SHIP <- load_shells(file.path(ROOT, "shells"))
-  ok(column_class_key("ACD38_QUAD", SHIP$classes) ==
-       column_class_key("Quadruplet with anti-CD38 backbone", SHIP$classes) &&
-       column_class_key("ACD38_QUAD", SHIP$classes) ==
-       column_class_key("quadruplet with  anti-CD38 backbone", SHIP$classes) &&
-       column_class_key("ACD38_QUAD", SHIP$classes) !=
-       column_class_key("ACD38_TRIP", SHIP$classes) &&
-       identical(column_class_key(c("OVERALL", ""), SHIP$classes), c("OVERALL", "OVERALL")),
+  SHELLS <- load_shells(file.path(ROOT, "shells"))
+  ok(column_class_key("ACD38_QUAD", SHELLS$classes) ==
+       column_class_key("Quadruplet with anti-CD38 backbone", SHELLS$classes) &&
+       column_class_key("ACD38_QUAD", SHELLS$classes) ==
+       column_class_key("quadruplet with  anti-CD38 backbone", SHELLS$classes) &&
+       column_class_key("ACD38_QUAD", SHELLS$classes) !=
+       column_class_key("ACD38_TRIP", SHELLS$classes) &&
+       identical(column_class_key(c("OVERALL", ""), SHELLS$classes), c("OVERALL", "OVERALL")),
      "a class by its id and by its category are one class; another class is not, and Overall is Overall")
-  S <- SHIP
+  S <- SHELLS
   for (nm in c("tables", "columns", "rows")) S[[nm]] <- S[[nm]][S[[nm]]$table_id == "T4", , drop = FALSE]
   S$rows <- S$rows[S$rows$stat == "km_events" & S$rows$measure == "TTNT", , drop = FALSE]
   cl <- S$columns[S$columns$column_id %in% c("1L_OVERALL", "1L_ACD38_QUAD", "1L_ACD38_TRIP"), ]
@@ -2932,11 +2932,11 @@ cat("\n-- a subgroup is what it selects, however it is written --\n")
 # were two levels, and NO and N two more: four levels adding up to twice the
 # total, which reads as no split at all, and 100 - 80 gave back the 20.
 local({
-  SHIP <- load_shells(file.path(ROOT, "shells"))
+  SHELLS <- load_shells(file.path(ROOT, "shells"))
   # T4's 1L Overall and its events row, with the subgroup columns given, each
   # in the table given: T4 beside Overall, or T5c.
   shell_with <- function(subs, where = "T4", class = "OVERALL") {
-    S <- SHIP
+    S <- SHELLS
     for (nm in c("tables", "columns", "rows"))
       S[[nm]] <- S[[nm]][S[[nm]]$table_id %in% c("T4", "T5c"), , drop = FALSE]
     S$rows <- S$rows[S$rows$stat == "km_events" & S$rows$measure == "TTNT", , drop = FALSE]
@@ -3069,13 +3069,13 @@ local({
 
 cat("\n-- a part inside a part, every split found, a line written one way --\n")
 local({
-  SHIP <- load_shells(file.path(ROOT, "shells"))
+  SHELLS <- load_shells(file.path(ROOT, "shells"))
   # T4's 1L Overall and its events row, with subgroup columns in the tables
   # given; `extra` adds rows copied from T1 (read off S_DEMOGRAPHICS, which
   # carries no line of its own).
   shell_with <- function(subs, where = "T4", line = "1", ov_line = "1", extra = 0L,
                          count_only = FALSE, class = "OVERALL") {
-    S <- SHIP
+    S <- SHELLS
     t1 <- S$rows[S$rows$table_id == "T1" & S$rows$stat == "n_pct" &
                    S$rows$source == "S_DEMOGRAPHICS" & grepl("^SEX=", S$rows$measure), ]
     for (nm in c("tables", "columns", "rows"))
@@ -3780,7 +3780,7 @@ local({
     out
   }
 
-  # The runner as shipped.
+  # The runner as bundled.
   spkg <- new.env(parent = globalenv())
   run  <- load_runner(spkg)
   cfg  <- quietly(run$open_study_package(pdir, "usr00000", "hive_metastore",

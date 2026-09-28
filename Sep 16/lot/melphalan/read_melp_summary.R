@@ -33,10 +33,12 @@ for (f in c("config_lot.R", "db_utils_lot.R"))
   source(file.path(LOT_ROOT, "R", f))
 source(file.path(.script_dir, "R", "cells.R"))
 
-# The previous reports are removed before this read starts, not when it
-# finishes writing. Every check below can stop the read, and a read that stops
-# should leave no report rather than an older one that looks current - under
-# either the current names or the ones this reader wrote before.
+# The previous reports are removed here, once the settings and helpers above
+# have loaded, not when the read finishes writing. Every check below can stop
+# the read, and a read that stops should leave no report rather than an older
+# one that looks current - under either the current names or the ones this
+# reader wrote before. A failure in the loading above comes first and can
+# leave the previous reports in place.
 out_dir <- melp_out_dir(.script_dir)
 dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
 melp_clear_summary(out_dir)

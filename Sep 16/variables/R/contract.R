@@ -11,7 +11,7 @@
 #
 # This is the one place those three facts are written down - MODULES,
 # SUPPRESSION_SPEC and OPTIONAL_FEATURES, which the run itself is driven by -
-# and study_contract() is them in a shape a CSV can hold. TFLS ships a
+# and study_contract() is them in a shape a CSV can hold. TFLS holds a
 # generated copy and reads it; its suite regenerates from here whenever this
 # package is beside it and fails on any difference. So the lists are authored
 # once and the copy cannot quietly diverge from the run that produced it.
@@ -45,7 +45,7 @@ study_contract <- function() {
 
 # The contract, as one value a run can record.
 #
-# A sibling reads a SHIPPED COPY of the contract, and a copy is a thing that
+# A sibling reads a BUNDLED COPY of the contract, and a copy is a thing that
 # can be stale: TFLS fills its shells from a snapshot on a machine where this
 # package is often not installed, so nothing there can regenerate the contract
 # and compare. Its suite catches a stale copy only where the two are side by
@@ -58,7 +58,7 @@ study_contract <- function() {
 # rewrite the line endings without touching a character of the content; a
 # byte hash would then refuse a contract that is the same contract. So the
 # value is the md5 of the lines joined by "\n" with one at the end - the same
-# function, contract_text_md5(), that TFLS computes over its shipped copy.
+# function, contract_text_md5(), that TFLS computes over its bundled copy.
 contract_text_md5 <- function(path) {
   txt <- paste0(paste(readLines(path, warn = FALSE), collapse = "\n"), "\n")
   tmp <- tempfile(); on.exit(unlink(tmp), add = TRUE)
@@ -90,7 +90,7 @@ study_code_md5 <- function(here = ".") {
   unname(tools::md5sum(tmp))
 }
 
-# The contract as a file, for a sibling that ships a copy.
+# The contract as a file, for a sibling that holds a copy.
 #
 # Written with the same writer settings every time so two emissions of an
 # unchanged registry are byte-identical - a comparison that fails on a

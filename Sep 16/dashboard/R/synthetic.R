@@ -50,7 +50,7 @@ SYNTH_CRITERIA <- c(
   `2L`    = paste(.CNEST, collapse = "; "),
   `3L`    = paste(.CNEST, collapse = "; "),
   # resolve_cohorts() drops X2 whenever SEC2L_APPLY_OTHER_CANCER is FALSE,
-  # which is the shipped default and the only setting under which SEC2L builds.
+  # which is the bundled default and the only setting under which SEC2L builds.
   SEC2L   = paste(setdiff(.C1L, "X2_other_cancer"), collapse = "; "))
 # nested_in: 1L and SEC2L are drawn from nobody.
 SYNTH_NESTED <- c(`1L` = 0L, `2L` = 1L, `3L` = 1L, SEC2L = 0L)
@@ -369,7 +369,7 @@ synthetic_one <- function(prefix, settings, min_n = 25L) {
     LOT_CODE_MD5 = "22222222222222222222222222222222",
     # The floor the LOT run was accepted against, as a real run records it -
     # so it has to be a floor that was in force when this run finished. The
-    # synthetic LOT run is dated 8 September; carrying the CURRENT shipped
+    # synthetic LOT run is dated 8 September; carrying the CURRENT bundled
     # epoch here described a run the lineage check would refuse, which is
     # not what a demo fixture should show a reader.
     LOT_RULES_EPOCH = "2026-08-30",
@@ -568,7 +568,7 @@ synthetic_one <- function(prefix, settings, min_n = 25L) {
     # Four cohorts, four different answers, taken from the study registry:
     # 1L is judged on nine criteria and is nested in nothing; 2L and 3L on
     # three, each nested in the one above; SEC2L is the 1L list MINUS
-    # X2_other_cancer under the shipped SEC2L_APPLY_OTHER_CANCER=FALSE, and is
+    # X2_other_cancer under the bundled SEC2L_APPLY_OTHER_CANCER=FALSE, and is
     # deliberately NOT nested - not being drawn from 1L is the whole point of
     # that cohort.
     CRITERIA_ASKED = SYNTH_CRITERIA[tte$COHORT],

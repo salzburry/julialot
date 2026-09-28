@@ -84,10 +84,12 @@ melp_out_dir <- function(script_dir) {
 }
 
 # The reports read_melp_summary.R writes, and the names it wrote them under
-# before. Every one is cleared before a read starts: a read that stops - on the
-# schema, the password, a provenance check - leaves no report rather than an
-# older one that looks current, and a read that finishes leaves one set of
-# reports, not two.
+# before. Every one is cleared once the reader's settings and helpers have
+# loaded and before its first check: a read that stops on the schema, the
+# password or a provenance check leaves no report rather than an older one
+# that looks current, and a read that finishes leaves one set of reports, not
+# two. A failure while loading the settings or helpers comes first and can
+# leave the previous reports in place.
 MELP_SUMMARY_CSVS <- c("melp_q1_line_duration.csv",
                        "melp_q1_paired_line_change.csv",
                        "melp_q1_line_count_change.csv",

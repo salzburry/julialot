@@ -158,7 +158,7 @@ ok(!identical(wrk("LOT_LONG"), "hive_metastore.wk.study_a_LOT_LONG"),
 cat("\n-- the contract --\n")
 full <- modifyList(cfg_defaults, list(work_schema = "wk", object_prefix = "p_"))
 ok(identical(tryCatch({ check_contract(full); "" }, error = conditionMessage), ""),
-   "the shipped settings satisfy the contract")
+   "the bundled settings satisfy the contract")
 for (k in c("lot1_from", "fu_ce_days", "pre_lot1_days", "gap_days", "study_end")) {
   drift <- full; drift[[k]] <- if (is.numeric(drift[[k]])) drift[[k]] + 1L else "1999-01-01"
   ok(grepl(k, tryCatch({ check_contract(drift); "" }, error = conditionMessage), fixed = TRUE),
@@ -276,13 +276,13 @@ ok("member_enrollment" %in% declared,
 
 cat("\n-- the settings the SQL uses, not the ones cfg holds --\n")
 # check_contract() reads cfg. The queries read the NDMM_* constants, which have
-# their own environment variables - NDMM_LOT1_FROM is not LOT1_FROM. Setting it
-# moved the 1L cutoff with the contract still passing.
+# their own environment variables. A constant reading a variable of its own
+# would move the 1L cutoff with the contract still passing.
 ce0 <- new.env(parent = globalenv())
 sys.source(file.path(ROOT, "R", "build_ndmm.R"), envir = ce0)
 base_cfg <- modifyList(cfg_defaults, list(work_schema = "wk", object_prefix = "p_"))
 ok(identical(tryCatch({ check_constants(base_cfg); "" }, error = conditionMessage), ""),
-   "the shipped constants match the contract they are checked against")
+   "the bundled constants match the contract they are checked against")
 for (s in CONSTANT_SETTINGS) {
   keep <- get(s$const, envir = globalenv())
   assign(s$const, if (is.numeric(keep)) keep + 1L else "1999-01-01",
@@ -296,7 +296,7 @@ for (s in CONSTANT_SETTINGS) {
 # And the list has to be complete. Every constant ndmm_constants.R reads from
 # the environment is a knob someone can turn without touching config.csv, so
 # each one must be pinned - read from the file rather than listed by hand,
-# because listing by hand is how NDMM_LOT1_FROM went unnoticed.
+# because a list kept by hand can miss one.
 kl <- c(readLines(file.path(ROOT, "R", "ndmm_constants.R"), warn = FALSE),
         readLines(file.path(ROOT, "R", "standalone_constants.R"), warn = FALSE))
 env_consts <- unique(sub("^\\s*([A-Za-z_.][A-Za-z0-9_.]*)\\s*<-.*", "\\1",
@@ -900,7 +900,7 @@ ok(length(intersect(names(CHOICES), names(CONTRACT))) == 0,
 base_ch <- modifyList(cfg_defaults, list(work_schema = "wk", object_prefix = "p_"))
 ok(identical(tryCatch({ check_contract(base_ch); "" }, error = conditionMessage), "") &&
      identical(tryCatch({ check_choices(base_ch); "" }, error = conditionMessage), ""),
-   "the shipped settings satisfy both")
+   "the bundled settings satisfy both")
 for (k in c("mm_adjacent_states")) {
   alt <- setdiff(CHOICES[[k]], base_ch[[k]])[1]
   ok(identical(tryCatch({ check_choices(modifyList(base_ch, setNames(list(alt), k))); "" },
@@ -1009,7 +1009,7 @@ ok(!grepl("2016-01-01", patids_sql, fixed = TRUE),
 ok(grepl("b.bel_dt < l1.LOT1_START_DT", patids_sql, fixed = TRUE),
    "...it only asks which side of the index the claim falls")
 
-cat("\n-- the handover list is bounded by the patient's own follow-up --\n")
+cat("\n-- the list passed to lot is bounded by the patient's own follow-up --\n")
 # The study period is not the window lot reads. lot bounds every claim by the
 # patient's OBS_END_DT, so a belantamab claim dated after they died is inside
 # the study period, would have been in this table, and is invisible to lot -
@@ -1550,7 +1550,7 @@ ok(any(grepl("1 codes", r$findings, fixed = TRUE)) &&
 # decision as it stands - report whatever the volume - and the run says so, so
 # nobody reads a clean log as a governed one.
 ok(!nzchar(Sys.getenv("NDMM_ICD_FLAG_MAX_ROWS", unset = "")),
-   "no ceiling is set by default, so the shipped behaviour is unchanged")
+   "no ceiling is set by default, so the bundled behaviour is unchanged")
 r <- drive_icd(7L)
 ok(grepl("no volume stops this build", r$log, fixed = TRUE),
    "...and the warning says out loud that nothing bounds it")
@@ -2062,7 +2062,7 @@ ok(!length(missing),
    else paste0("...and every one of them is brought up to its list (",
                length(made), ")"))
 
-cat("\n-- every setting config.csv ships is one the code reads --\n")
+cat("\n-- every setting in config.csv is one the code reads --\n")
 # NDMM_BELANTAMAB_SCOPE outlived the code that read it - the proxy moved to the
 # lot package, every reader went, and the row stayed, still looking like a
 # knob. Nothing compared the two.
@@ -2087,7 +2087,7 @@ read_env <- local({
 })
 unread <- setdiff(cnames, read_env)
 ok(length(unread) == 0,
-   if (length(unread)) paste0("config.csv ships settings nothing reads: ",
+   if (length(unread)) paste0("config.csv holds settings nothing reads: ",
                               paste(unread, collapse = ", "))
    else paste0("all ", length(cnames), " settings in config.csv are read by R/"))
 
@@ -2097,7 +2097,7 @@ cat("\n-- metastatic codes group together, primaries pair by category --\n")
 # would ask for the same metastasis twice, so C78.7 (liver) and C79.51 (bone)
 # would never confirm each other.
 ok(exists("NDMM_METASTATIC_PREFIXES") && length(NDMM_METASTATIC_PREFIXES) >= 8,
-   paste0("a named metastatic prefix list ships (", length(NDMM_METASTATIC_PREFIXES), ")"))
+   paste0("a named metastatic prefix list is defined (", length(NDMM_METASTATIC_PREFIXES), ")"))
 ok(all(c("C77", "C78", "C79", "C7B") %in% NDMM_METASTATIC_PREFIXES),
    "the ICD-10 secondary ranges are in it")
 ok(all(c("196", "197", "198") %in% NDMM_METASTATIC_PREFIXES),

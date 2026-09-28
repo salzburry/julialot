@@ -127,7 +127,7 @@ names(SQL) <- vapply(LOT_QC_CHECKS, function(c_i) c_i$id, character(1))
 
 cat("\n-- the catalogue holds together --\n")
 ok(length(LOT_QC_CHECKS) > 0, "there are checks")
-ok(isTRUE(check_qc_catalogue()), "the shipped catalogue passes its own validation")
+ok(isTRUE(check_qc_catalogue()), "the bundled catalogue passes its own validation")
 # Ids end up in a report. Two rows with one id is two findings nobody can tell
 # apart afterwards.
 stops(check_qc_catalogue(list(modifyList(LOT_QC_CHECKS[[1]], list(id = "")))),

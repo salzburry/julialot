@@ -21,9 +21,9 @@ The golden queries are written without it and it is substituted in, so the
 same expectations hold whatever a run is configured to call its tables.
 
 `goldens.py` names a file defining EXPECTATIONS in place of
-tests/expectations.py, for a run over a registry other than the shipped one
-- a custom criterion, say - whose numbers the shipped goldens do not
-describe. RERUN_STABLE_TABLES is taken from the shipped module unless the
+tests/expectations.py, for a run over a registry other than the bundled one
+- a custom criterion, say - whose numbers the bundled goldens do not
+describe. RERUN_STABLE_TABLES is taken from the bundled module unless the
 file defines its own.
 """
 import csv, functools, os, re, sys

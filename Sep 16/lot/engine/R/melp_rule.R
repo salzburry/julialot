@@ -319,7 +319,7 @@ melp_decision_ctes <- function(cfg, line_tbl, start_col, span_end, induction_end
              -- unsuppressed and its later dose opened a line, while the new
              -- line's own statement judged the same course outside its window
              -- and suppressed it - so the line was started by a dose it then
-             -- held out of its own regimen. Shipped checks A7 and C4 both call
+             -- held out of its own regimen. Bundled checks A7 and C4 both call
              -- that a failure.
              CASE WHEN mc.EXPO_DT >= {line_tbl}.{start_col}
                    AND mc.EXPO_DT <= {induction_end}{no_regimen_pred}
@@ -651,7 +651,7 @@ melp_short_course_ctes <- function(cfg, verdict) {
   # arguably what 4.7 wants. No patient in the validation set tells the two
   # apart, so it stays a rule question for the study team rather than a silent
   # edit. R14 and R15 in lot/melphalan/tests/exec_rule.R are the shape that
-  # does tell them apart, and they pin the reading that ships.
+  # does tell them apart, and they pin the reading that is built.
   paste0("\n", glue("
     melp_no_break AS (
       SELECT DISTINCT PATID, DOSE_DT AS MAP_START_DT

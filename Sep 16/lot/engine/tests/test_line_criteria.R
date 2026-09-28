@@ -1,5 +1,5 @@
 #!/usr/bin/env Rscript
-# Checks on the per-line criteria layer. The shipped registry is empty, so the
+# Checks on the per-line criteria layer. The bundled registry is empty, so the
 # fixtures below are what exercise the builders.
 #
 #   Rscript "lot/engine/tests/test_line_criteria.R"
@@ -29,13 +29,13 @@ C_PARAM <- crit(name = "c4", flag = "F4",
 clear <- function() for (v in paste0("APPLY_", toupper(c("c1","c2","c3","c4"))))
   Sys.unsetenv(v)
 
-cat("\n-- the shipped registry --\n")
-runs(validate_line_criteria(), "the shipped registry validates")
-# One criterion ships: the belantamab exclusion. It is applied here because
+cat("\n-- the bundled registry --\n")
+runs(validate_line_criteria(), "the bundled registry validates")
+# One criterion is defined: the belantamab exclusion. It is applied here because
 # lines do not yet exist when the cohort build runs.
 ok(length(LINE_CRITERIA) == 1 &&
      identical(LINE_CRITERIA[[1]]$name, "no_belantamab"),
-   "the belantamab exclusion is the one criterion shipped")
+   "the belantamab exclusion is the one criterion bundled")
 ok(identical(LINE_CRITERIA[[1]]$on_fail, "truncate") &&
      identical(LINE_CRITERIA[[1]]$lines, "*"),
    "...asked of every line, and it removes rather than flags")

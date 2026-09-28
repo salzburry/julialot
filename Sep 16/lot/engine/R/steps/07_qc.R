@@ -4,7 +4,8 @@ phase_qc <- function(con, ctx) {
 
   # NDC shape is not checked here. check_claim_ndc covers both claim tables and
   # ndc_shape, ndc_short and bad_ndc cover the code list, both before
-  # extraction. lot/FILES.md has the arithmetic behind the two NDC shapes.
+  # extraction. lot/CONTENTS.md, "The code-list checks", has the arithmetic
+  # behind the two NDC shapes.
 
   # The validation QC suite reports on MAP and LOT and does not gate: the whole
   # block is wrapped below, so a failure here prints and the run carries on.

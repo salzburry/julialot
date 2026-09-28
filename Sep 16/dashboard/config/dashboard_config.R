@@ -34,6 +34,20 @@
   v <- suppressWarnings(as.integer(.env_chr(k, NA_character_)))
   if (is.na(v)) d else v
 }
+# The study's small-cell floor. DASH_SUPPRESS_MIN_N may raise the page's floor
+# above it and never lower it, so a value under it - or one that is not a whole
+# number - is refused rather than applied or ignored.
+DASH_STUDY_MIN_N <- 25L
+.env_min_n <- function(k) {
+  raw <- .env_chr(k, NA_character_)
+  if (is.na(raw)) return(DASH_STUDY_MIN_N)
+  v <- suppressWarnings(as.numeric(raw))
+  if (is.na(v) || v != round(v) || v < DASH_STUDY_MIN_N)
+    stop("DASHBOARD ERROR: ", k, "='", raw, "' is not a whole number at or above ",
+         "the study's small-cell floor of ", DASH_STUDY_MIN_N, ". It can raise the ",
+         "floor, never lower it.", call. = FALSE)
+  as.integer(v)
+}
 .env_lgl <- function(k, d) {
   v <- toupper(.env_chr(k, NA_character_))
   if (is.na(v)) d else v %in% c("TRUE", "T", "1", "YES")
@@ -88,7 +102,7 @@ dashboard_config <- function() {
     # The floor the dashboard applies on top of what it reads. The package
     # already suppresses into S_*_RELEASE; this is a second, tighter floor a
     # viewer can raise but NEVER lower below the package's own.
-    suppress_min_n  = .env_int("DASH_SUPPRESS_MIN_N", 25L),
+    suppress_min_n  = .env_min_n("DASH_SUPPRESS_MIN_N"),
     prefer_release  = .env_lgl("DASH_PREFER_RELEASE", TRUE),
     default_cohort  = .env_chr("DASH_DEFAULT_COHORT", "1L"),
     max_rows        = .env_int("DASH_MAX_ROWS", 5000L),

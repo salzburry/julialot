@@ -431,6 +431,26 @@ cat("\nthe suppression floor can be raised and never lowered\n")
      "so a stratum of 10 is still withheld however low the viewer sets it")
   ok(lo$SUPPRESSED[2] == 0L && !is.na(lo$RATE[2]),
      "and one above the floor is still shown")
+  # The package floor every call on the page passes is DASH_SUPPRESS_MIN_N,
+  # and that setting cannot be put under the study's 25.
+  local({
+    old <- Sys.getenv("DASH_SUPPRESS_MIN_N", unset = NA)
+    on.exit(if (is.na(old)) Sys.unsetenv("DASH_SUPPRESS_MIN_N")
+            else Sys.setenv(DASH_SUPPRESS_MIN_N = old), add = TRUE)
+    cfg_with <- function(v) {
+      if (is.na(v)) Sys.unsetenv("DASH_SUPPRESS_MIN_N")
+      else Sys.setenv(DASH_SUPPRESS_MIN_N = v)
+      tryCatch(dashboard_config()$suppress_min_n, error = function(e) conditionMessage(e))
+    }
+    ok(identical(cfg_with(NA), 25L) && identical(cfg_with("30"), 30L),
+       "DASH_SUPPRESS_MIN_N defaults to 25 and can raise it")
+    refused <- vapply(c("10", "24", "abc", "25.5"), function(v) {
+      r <- cfg_with(v); is.character(r) && grepl("never lower it", r, fixed = TRUE)
+    }, logical(1))
+    ok(all(refused),
+       paste0("...and a value under 25, or not a whole number, is refused rather than applied (",
+              paste(names(refused)[!refused], collapse = ", "), ")"))
+  })
   # The floor the viewer asked for is what applies when it is the higher.
   mid <- apply_floor(d, sp, 5000L, package_min_n = 25L)
   ok(identical(attr(mid, "floor"), 5000L),
@@ -1258,7 +1278,7 @@ source(file.path(here, "jobs", "export_lib.R"))
      "and a lower-case column is documentation, not a setting to export")
 
   # --- what every scenario reads is set before any of them is built ---
-  # The shipped config.csv leaves the cohort table and both read prefixes
+  # The bundled config.csv leaves the cohort table and both read prefixes
   # blank, and a grid row names neither, so a Job given only the password and
   # the schema built nothing: each child stopped in turn, or read its inputs
   # under its own prefix.
@@ -1269,7 +1289,7 @@ source(file.path(here, "jobs", "export_lib.R"))
   g0 <- with_env(unset_inputs, shared_inputs_missing(two, c("sc_a_", "sc_b_"), shipped_csv))
   ok(identical(g0, c("INPUT_COHORT_TABLE (every scenario)", "LOT_PREFIX (sc_a_)",
                      "COHORT_PREFIX (every scenario)")),
-     "with the shipped config.csv and nothing from the Job, the three shared inputs are named, row by row")
+     "with the bundled config.csv and nothing from the Job, the three shared inputs are named, row by row")
   g1 <- with_env(c(INPUT_COHORT_TABLE = "ndmm_NDMM_COHORT", LOT_PREFIX = "ndmm_",
                    COHORT_PREFIX = "ndmm_"),
                  shared_inputs_missing(two, c("sc_a_", "sc_b_"), shipped_csv))
@@ -1287,7 +1307,7 @@ source(file.path(here, "jobs", "export_lib.R"))
   ok(at_check > 0 && at_build > 0 && at_check < at_build,
      "the Job asks before the first scenario is built, not after each one fails")
 
-  # --- the shipped grid, row by row, through the package's own config ---
+  # --- the bundled grid, row by row, through the package's own config ---
   # A grid value the package would refuse is found here rather than on the
   # cluster: ED_DEFINITION takes a comma list of revenue, pos and cpt, and a
   # word such as rev_or_pos is never read.
@@ -1307,7 +1327,7 @@ source(file.path(here, "jobs", "export_lib.R"))
     if (!is.na(msg)) refused <- c(refused, paste0(grid$prefix[i], ": ", msg))
   }
   ok(!length(refused),
-     paste0("every row of the shipped grid is a setting the package accepts",
+     paste0("every row of the bundled grid is a setting the package accepts",
             if (length(refused)) paste0(" [", paste(refused, collapse = " | "), "]") else ""))
   base_cfg <- grid_cfg(grid[1, ])
   ok(identical(base_cfg$ed_definition, c("revenue", "pos")),
@@ -1566,14 +1586,14 @@ source(file.path(here, "jobs", "export_lib.R"))
        grepl("carrying no identifier", jb, fixed = TRUE),
      "...and every export names the shareable artefact, since a Dataset nobody may share needs one")
   local({
-    dep <- paste(readLines(file.path(here, "DEPLOY_DOMINO.md"), warn = FALSE),
+    dep <- paste(readLines(file.path(here, "DASHBOARD.md"), warn = FALSE),
                  collapse = "\n")
     ok(!grepl("share the `S_*_RELEASE` tables from it", dep, fixed = TRUE),
-       "...and the deployment note no longer says a cut-down Dataset is one")
+       "...and the deployment section does not say a cut-down Dataset is one")
     ok(grepl("TFLS/run_tfls.R", dep, fixed = TRUE),
-       "...it points at the shells, which are filled at a floor that may only rise")
+       "...the deployment section points at the shells, which are filled at a floor that may only rise")
     ok(grepl("RELEASE_RECOVERABLE_TABLES", dep, fixed = TRUE),
-       "...and the verdict table names what the App actually refuses on")
+       "...and the deployment section's verdict table names what the App actually refuses on")
   })
   ok(grepl("lot_dir_name(lot_id, lot_version)", jb, fixed = TRUE) &&
        grepl("lot_prefix_owner_ok(con, lot_tbl(\"LOT_BUILD_STATUS\"),\n                                          lot_id, lot_version)", jb, fixed = TRUE),
@@ -1942,7 +1962,7 @@ ok(lot_run_bound(SRC, SCENARIOS[[1]]),
          "the synthetic NESTED flags are the registry's own nested_in, so SEC2L is not marked drawn from a cohort it stands apart from")
       want_crit <- vapply(COHORT_KEYS, function(k) {
         cr <- pkg$COHORTS[[k]]$criteria
-        # resolve_cohorts() drops X2 from SEC2L under the shipped default.
+        # resolve_cohorts() drops X2 from SEC2L under the bundled default.
         if (identical(k, "SEC2L")) cr <- setdiff(cr, "X2_other_cancer")
         paste(cr, collapse = "; ")
       }, character(1))
@@ -2815,7 +2835,7 @@ cat("\nthe snapshot is rebuilt while a shell table is being filled\n")
     ok(grepl('table class="grid"', shell_panel_html(ready, f), fixed = TRUE),
        "...so a filled table drawn from it would put the previous run's rows on the page")
     # What keeps them off it: the same check, asked again between the fill and
-    # anything being drawn. A text check, because the placement is the fix -
+    # anything being drawn. A text check, because the placement is what matters -
     # the answer itself is driven above.
     app <- paste(readLines("app.R", warn = FALSE), collapse = "\n")
     after <- substring(app, regexpr("shell_fill(ready, tid", app, fixed = TRUE))

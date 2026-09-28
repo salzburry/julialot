@@ -68,7 +68,7 @@ NDMM_INDEX_EXCLUDED_CODES <- Sys.getenv("NDMM_INDEX_EXCLUDED_CODES", unset = "")
 # nobody could check - a patient dropped here never gets lines. It lives in
 # lot/engine/R/line_criteria.R instead, where LOT membership is known.
 #
-# NO_BELANTAMAB is still computed and still ships on the cohort table, over the
+# NO_BELANTAMAB is still computed and still carried on the cohort table, over the
 # whole study period, as a record of who carries a belantamab claim at all.
 # Nothing filters on it.
 

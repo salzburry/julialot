@@ -503,12 +503,12 @@ build_ndmm_fu_ce_counts <- function(con, cfg) {
   invisible(got)
 }
 
-# The handover list: cohort members carrying a belantamab claim that lot will
+# The list passed to lot: cohort members carrying a belantamab claim that lot will
 # act on.
 #
 # Nothing here is adjudicated. The pre-index half is criterion 9, so those
 # patients are already gone; the index-onward half is lot's no_belantamab.
-# This is only the handover list.
+# This is only the list passed to lot.
 #
 # Read off NDMM_COHORT, so the claim is bounded by the patient's own ENDDATE
 # and not just by the study end. That bound is the point: lot reads claims up

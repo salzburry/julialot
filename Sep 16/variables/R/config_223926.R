@@ -151,7 +151,7 @@ cfg_defaults <- function(catalog = .env_chr("DATABRICKS_CATALOG", "hive_metastor
     tbl_member_elig       = .env_chr("TBL_MEMBER_ELIG", ""),
     tbl_dod               = .env_chr("TBL_DOD", ""),
     # Empty means "this package's own codelists/", resolved against the
-    # package directory in build_223926(). The folder ships the shapes so it is
+    # package directory in build_223926(). The folder holds the shapes so it is
     # complete on its own; production points this at the real directory.
     codelist_dir = .env_chr("CODELIST_DIR", ""),
 
@@ -161,7 +161,7 @@ cfg_defaults <- function(catalog = .env_chr("DATABRICKS_CATALOG", "hive_metastor
     cohort_prefix      = .env_chr("COHORT_PREFIX", ""),
     lot_prefix         = .env_chr("LOT_PREFIX", ""),
     # The LOT build whose numbers a study team has approved, by the
-    # fingerprint the engine records of the R that ran. Empty is the shipped
+    # fingerprint the engine records of the R that ran. Empty is the bundled
     # default and checks nothing; set, it is the one way to say "these numbers
     # rest on THAT code" rather than "on code that finished after a date".
     lot_code_md5       = .env_chr("LOT_CODE_MD5", ""),
@@ -423,7 +423,7 @@ OPEN_QUESTION_SOURCE <- c(
   claim_status                        = "here",
   frailty                             = "here",
   comorbid_subgroups                  = "here",
-  # Applied by the COHORT BUILD upstream, not here. ../IE_CRITERIA_APPLIED.md section 4.
+  # Applied by the COHORT BUILD upstream, not here. ../IE_CRITERIA.md "Settings the cohort build owns".
   study_start                         = "upstream",
   mm_dx_outpatient_codes              = "upstream",
   mm_dx_outpatient_window_days        = "upstream",
