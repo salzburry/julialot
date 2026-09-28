@@ -62,10 +62,12 @@ each decision is worth" ranks them all):
 
 The five study folders stay siblings: the dashboard finds this package at
 `../variables`, the engine at `../lot/engine` and the shells at `../TFLS`; the
-shell runner finds this package by `TFLS_PACKAGE_DIR`. Nothing in this package
-reads a file outside it (a test asserts that no path function in any R file
-reaches out). The two things it needs that are not files are the warehouse and
-the production code-list directory.
+shell runner finds this package by `TFLS_PACKAGE_DIR`. This package sources no
+code from a sibling folder (a test asserts that no path in any R file reaches
+outside it). What it reads from outside is supplied, not reached for: the
+warehouse, and the production code-list CSVs, read from the folder
+`CODELIST_DIR` names ("Running it" below; blank means the templates in
+`codelists/`).
 
 | path | what it is |
 |---|---|

@@ -444,11 +444,18 @@ cat("\nthe suppression floor can be raised and never lowered\n")
     }
     ok(identical(cfg_with(NA), 25L) && identical(cfg_with("30"), 30L),
        "DASH_SUPPRESS_MIN_N defaults to 25 and can raise it")
-    refused <- vapply(c("10", "24", "abc", "25.5"), function(v) {
+    # A floor raised past the slider's usual top still starts the page: the
+    # slider reaches it rather than having a minimum above its maximum.
+    app_src <- paste(readLines(file.path(here, "app.R"), warn = FALSE), collapse = "\n")
+    ok(identical(cfg_with("500"), 500L) &&
+         grepl("max = max(200L, DASH_CFG$suppress_min_n)", app_src, fixed = TRUE),
+       "...to any whole number, and the floor slider reaches a floor set above 200")
+    refused <- vapply(c("10", "24", "abc", "25.5", "Inf", "-Inf", "1e309",
+                        "2147483648", "NaN"), function(v) {
       r <- cfg_with(v); is.character(r) && grepl("never lower it", r, fixed = TRUE)
     }, logical(1))
     ok(all(refused),
-       paste0("...and a value under 25, or not a whole number, is refused rather than applied (",
+       paste0("...and a value under 25, not a whole number, not finite or past the largest integer is refused at start-up rather than applied (",
               paste(names(refused)[!refused], collapse = ", "), ")"))
   })
   # The floor the viewer asked for is what applies when it is the higher.
@@ -1595,9 +1602,29 @@ source(file.path(here, "jobs", "export_lib.R"))
     ok(grepl("RELEASE_RECOVERABLE_TABLES", dep, fixed = TRUE),
        "...and the deployment section's verdict table names what the App actually refuses on")
   })
-  ok(grepl("lot_dir_name(lot_id, lot_version)", jb, fixed = TRUE) &&
+  ok(grepl("lot_snapshot_paths(out_dir, lot_id, lot_version)", jb, fixed = TRUE) &&
        grepl("lot_prefix_owner_ok(con, lot_tbl(\"LOT_BUILD_STATUS\"),\n                                          lot_id, lot_version)", jb, fixed = TRUE),
      "...files LOT tables by build and binds the prefix to that build")
+  # A LOT run id or build that is not one safe path segment is refused before
+  # either LOT path exists, and the job builds no LOT path any other way - so
+  # a refused name reaches no staging, no copy and no publish().
+  bad_names <- list(c("../../etc", ""), c("lot", "../x"), c("a/b", ""),
+                    c(".hidden", ""), c("lot", "x/y"), c("", ""))
+  refused <- vapply(bad_names, function(b) inherits(tryCatch(
+    lot_snapshot_paths(tempdir(), b[1], b[2]), error = function(e) e), "error"),
+    logical(1))
+  good <- lot_snapshot_paths("/snap", "new_lot", "20260601T000000Z")
+  ok(all(refused) &&
+       identical(good$dest, file.path("/snap", "lot", "new_lot.20260601T000000Z")) &&
+       identical(good$stage, file.path("/snap", "lot", ".new_lot.20260601T000000Z.staging")),
+     paste0("an unsafe LOT run id or build is refused before a snapshot path is built, and a safe one names both (",
+            paste(vapply(bad_names[!refused], paste, "", collapse = "."), collapse = "; "), ")"))
+  lp_at <- regexpr("lot_paths <- lot_snapshot_paths(out_dir, lot_id, lot_version)", jb, fixed = TRUE)
+  after_lp <- function(s) { at <- gregexpr(s, jb, fixed = TRUE)[[1]]; all(at < 0) || all(at > lp_at) }
+  ok(lp_at > 0 && !grepl('file.path(out_dir, "lot"', jb, fixed = TRUE) &&
+       after_lp("ld <- lot_paths$dest") && after_lp("lstage <- lot_paths$stage") &&
+       after_lp("publish(stage, d, n, prefix, lot_id") && after_lp("read_export(con, lot_tbl(tb)"),
+     "...and the job checks it before it stages, reads or publishes anything of that LOT run")
   ok(grepl("if (cached && nzchar(lot_version)) return(reuse())", jb, fixed = TRUE) &&
        regexpr("if (!owner())", jb, fixed = TRUE) < regexpr("if (cached) return(reuse())", jb, fixed = TRUE),
      "...and reuses a run-only directory only while the prefix still belongs to the run")

@@ -154,6 +154,21 @@ discard_set_aside <- function(old, gone) {
   invisible(TRUE)
 }
 
+# The LOT build's snapshot directory and its staging directory, both from one
+# checked name. The run id and build come from the LOT run's own metadata, so
+# the name is checked here, as the reader checks it, before either path is
+# built: a name that is not one safe path segment stops the export, and nothing
+# is staged, copied or published under it.
+lot_snapshot_paths <- function(out_dir, lot_id, lot_version = "") {
+  nm <- lot_dir_name(lot_id, lot_version)
+  if (!safe_segment(nm))
+    stop("the LOT run id and build '", nm, "' cannot name a snapshot directory ",
+         "(letters, digits, '.', '_' and '-' only, beginning with a letter or ",
+         "a digit), so nothing was exported for this scenario", call. = FALSE)
+  list(dest  = file.path(out_dir, "lot", nm),
+       stage = file.path(out_dir, "lot", paste0(".", nm, ".staging")))
+}
+
 publish <- function(stage, dest, n, prefix, lot_id, lstage = NULL, ldest = NULL) {
   swap <- function(from, to) {
     if (is.null(from) || !dir.exists(from)) return(invisible(FALSE))

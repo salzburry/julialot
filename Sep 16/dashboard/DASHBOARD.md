@@ -424,10 +424,13 @@ goes in backtick-quoted, Spark's delimited identifier: a leading underscore, a
 hyphen, an all-digit name or a reserved word reads correctly, and a prefix of
 `x; DROP TABLE p; --` is one identifier no warehouse has, so the read finds
 nothing instead of running it. What is refused is only what quoting cannot
-hold: a backtick, a control character, an empty name. A scenario prefix or a
-LOT run id that becomes a snapshot path is used only as one path segment -
-letters, digits, `.`, `_` or `-`, starting with a letter or digit - so a run id
-of `../../PRIVATE` cannot reach a file outside the snapshot root;
+hold: a backtick, a control character, an empty name. A scenario prefix, and
+the LOT run id and build that name a LOT directory (`<run id>.<build>`), are
+used only as one path segment - letters, digits, `.`, `_` or `-`, starting with
+a letter or digit - so a run id of `../../PRIVATE` cannot reach a file outside
+the snapshot root. The Job checks the LOT name before it builds the directory
+or its staging copy, and a name that fails stops that scenario's export with
+nothing published; the page checks every segment again when it reads.
 `TFLS_PREFIX` is held to the same rule.
 
 ### Reading the warehouse directly
