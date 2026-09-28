@@ -250,8 +250,8 @@ export_one <- function(prefix, env) {
           "draws has none, so that extract is incomplete AND still ",
           "unsuppressed. TFLS/run_tfls.R fills the shells from this run at a ",
           "floor that may only rise and writes tables carrying no identifier: ",
-          "those are the shareable artefact. DEPLOY_DOMINO.md says the same ",
-          "under Deployment controls.")
+          "those are the shareable artefact. dashboard/DASHBOARD.md says the ",
+          "same under Deployment controls.")
   n <- 0L; bad <- character(0); not_this_run <- character(0)
   for (tb in EXPORT) {
     if (!scenario_wrote(scen, tb)) { not_this_run <- c(not_this_run, tb); next }

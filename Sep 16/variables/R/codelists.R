@@ -2,7 +2,7 @@
 #
 # Every code list this package needs is a CSV under CODELIST_DIR, and none of
 # them is in version control. Four have no codes yet: they come out of the
-# protocol's Annex 2, Annex 3 and Annex 7 (../CODELISTS.md).
+# protocol's Annex 2, Annex 3 and Annex 7 (../DATA_MAPPING.md, "Code lists").
 #
 # The guard: a code list that exists but is UNFILLED stops the module that
 # needs it. A rate of zero for want of a code list is indistinguishable in
@@ -36,7 +36,7 @@ CODELIST_SPEC <- list(
   "cl_mma_rollup.csv"         = c("CL_MEDICATION_FULL", "CL_MED_CLASS",
                                   "CL_MED_ABBR"),
   "cl_sct_codelist.csv"       = c("CL_CODE_TYPE", "CL_CODE", "SCT_TYPE"),
-  # To be authored. ../CODELISTS.md section 4 proposes each shape.
+  # To be authored. ../DATA_MAPPING.md, "The files this package reads", has each shape.
   "safety_events.csv"         = c("condition", "domain", "acute_chronic",
                                   "code_type", "code", "icd_family"),
   "secondary_malig.csv"       = c("category", "subtype", "code_type", "code",
@@ -105,7 +105,7 @@ load_codelist <- function(csv_name, cfg) {
     stop("CODELIST ERROR: ", path, " does not exist.",
          if (csv_name %in% names(CODELIST_SOURCE))
            paste0("\nIt comes from ", CODELIST_SOURCE[[csv_name]],
-                  " - see ../CODELISTS.md.")
+                  " - see ../DATA_MAPPING.md, \"Code lists\".")
          else "", call. = FALSE)
 
   md5 <- unname(tools::md5sum(path))

@@ -431,6 +431,26 @@ cat("\nthe suppression floor can be raised and never lowered\n")
      "so a stratum of 10 is still withheld however low the viewer sets it")
   ok(lo$SUPPRESSED[2] == 0L && !is.na(lo$RATE[2]),
      "and one above the floor is still shown")
+  # The package floor every call on the page passes is DASH_SUPPRESS_MIN_N,
+  # and that setting cannot be put under the study's 25.
+  local({
+    old <- Sys.getenv("DASH_SUPPRESS_MIN_N", unset = NA)
+    on.exit(if (is.na(old)) Sys.unsetenv("DASH_SUPPRESS_MIN_N")
+            else Sys.setenv(DASH_SUPPRESS_MIN_N = old), add = TRUE)
+    cfg_with <- function(v) {
+      if (is.na(v)) Sys.unsetenv("DASH_SUPPRESS_MIN_N")
+      else Sys.setenv(DASH_SUPPRESS_MIN_N = v)
+      tryCatch(dashboard_config()$suppress_min_n, error = function(e) conditionMessage(e))
+    }
+    ok(identical(cfg_with(NA), 25L) && identical(cfg_with("30"), 30L),
+       "DASH_SUPPRESS_MIN_N defaults to 25 and can raise it")
+    refused <- vapply(c("10", "24", "abc", "25.5"), function(v) {
+      r <- cfg_with(v); is.character(r) && grepl("never lower it", r, fixed = TRUE)
+    }, logical(1))
+    ok(all(refused),
+       paste0("...and a value under 25, or not a whole number, is refused rather than applied (",
+              paste(names(refused)[!refused], collapse = ", "), ")"))
+  })
   # The floor the viewer asked for is what applies when it is the higher.
   mid <- apply_floor(d, sp, 5000L, package_min_n = 25L)
   ok(identical(attr(mid, "floor"), 5000L),
@@ -1566,14 +1586,14 @@ source(file.path(here, "jobs", "export_lib.R"))
        grepl("carrying no identifier", jb, fixed = TRUE),
      "...and every export names the shareable artefact, since a Dataset nobody may share needs one")
   local({
-    dep <- paste(readLines(file.path(here, "DEPLOY_DOMINO.md"), warn = FALSE),
+    dep <- paste(readLines(file.path(here, "DASHBOARD.md"), warn = FALSE),
                  collapse = "\n")
     ok(!grepl("share the `S_*_RELEASE` tables from it", dep, fixed = TRUE),
-       "...and the deployment note no longer says a cut-down Dataset is one")
+       "...and the deployment section does not say a cut-down Dataset is one")
     ok(grepl("TFLS/run_tfls.R", dep, fixed = TRUE),
-       "...it points at the shells, which are filled at a floor that may only rise")
+       "...the deployment section points at the shells, which are filled at a floor that may only rise")
     ok(grepl("RELEASE_RECOVERABLE_TABLES", dep, fixed = TRUE),
-       "...and the verdict table names what the App actually refuses on")
+       "...and the deployment section's verdict table names what the App actually refuses on")
   })
   ok(grepl("lot_dir_name(lot_id, lot_version)", jb, fixed = TRUE) &&
        grepl("lot_prefix_owner_ok(con, lot_tbl(\"LOT_BUILD_STATUS\"),\n                                          lot_id, lot_version)", jb, fixed = TRUE),

@@ -3299,7 +3299,7 @@ step_sql <- function(r, tag) {
 
 cat("\n-- config.csv is every setting, and stays that way --\n")
 {
-  # CONTENTS.md and MODULES.md both say this file holds every setting. Nothing
+  # README.md says this file holds every setting. Nothing
   # held them to it, and nine were absent: six of the eight CDM table names,
   # the two retry knobs, and SETTINGS_OVERRIDE - the one that lets a run
   # proceed against a cohort it disagrees with. A setting a reader cannot find

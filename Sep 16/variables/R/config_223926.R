@@ -423,7 +423,7 @@ OPEN_QUESTION_SOURCE <- c(
   claim_status                        = "here",
   frailty                             = "here",
   comorbid_subgroups                  = "here",
-  # Applied by the COHORT BUILD upstream, not here. ../IE_CRITERIA_APPLIED.md section 4.
+  # Applied by the COHORT BUILD upstream, not here. ../IE_CRITERIA.md "Settings the cohort build owns".
   study_start                         = "upstream",
   mm_dx_outpatient_codes              = "upstream",
   mm_dx_outpatient_window_days        = "upstream",

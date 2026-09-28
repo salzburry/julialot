@@ -7,7 +7,7 @@
 # TTD's event is the union of several LOT_BASE_END_REASON values, because the
 # protocol's footnote defines discontinuation as all agents stopped OR a new
 # agent OR a qualifying SCT - IS_PROTOCOL_DISCON on the spine.
-# ../CONFORMANCE.md, "The LOT engine against the protocol's LOT wording".
+# ../VARIABLES.md, "Time-to-event conventions".
 mod_tte <- function(con, cfg, cohort) {
   # Each event date is written once and reused, so the date column and the days
   # column cannot describe different events. Every date is clipped to FU_END
