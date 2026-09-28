@@ -414,7 +414,7 @@ ok(!any(is.na(at)) && !is.unsorted(at[!is.na(at)]),
    "and calls them in that order")
 
 cat("\n-- the criteria layer reaches the warehouse --\n")
-# lot/FILES.md promises these two tables. Driven with the real SQL builders,
+# lot/CONTENTS.md ("What a run writes") promises these two tables. Driven with the real SQL builders,
 # so what is asserted is what reaches the warehouse rather than a description
 # of it.
 pe <- new.env(parent = globalenv())

@@ -1531,7 +1531,7 @@ cat("\nthe rules that hold the numbers up\n")
     # WITHOUT moving the date: no rule moved, so no line did, and moving the
     # date would refuse runs for a change that alters nothing they built.
     # Where a rule changes, the date moves too - that is what the date is for.
-    engine = "5548a3eb7f8fab44f903e029c619e601",
+    engine = "75adca30698b86bdb10e1572b7adf6d3",
     # ...and its shipped settings, which code_fingerprint() does not read.
     # Most of what decides a line is pinned in the engine's own CONTRACT and
     # so is inside the R, but the study window is not, and a build reading a

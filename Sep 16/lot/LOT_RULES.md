@@ -1,20 +1,22 @@
 # The lines-of-therapy rules
 
 Every rule the build applies: what it does, the setting that governs it, the
-file it lives in, and the vignette that illustrates it.
+file it lives in, and the worked example that shows it. What each file does,
+and how to run a build, is in `CONTENTS.md`.
 
 A vignette id in backticks — `tandem_within` — names a case in
-`lot/validation/R/vignettes.R`, rendered with its timeline to
-`lot/validation/out/lot_edge_case_vignettes.md`. Each case states what these
-rules give for that timeline, with every offset derived from the setting that
-decides it. It is a specification, not an observed result: nothing runs a
-patient through the engine to confirm it, and cases marked `to_confirm` are a
-reading of how the rules interact that the first warehouse run settles.
-`lot/validation/tests/test_vignettes.R` fails if a rule here cites a case that
-does not exist, or a case is cited by no rule.
-
-Plain-language walk-throughs of the same rules are in `LOT_RULES_EXPLAINED.md`;
-what each file does is in `FILES.md`.
+`lot/validation/R/vignettes.R`, rendered with its timeline and expected result
+to `lot/validation/out/lot_edge_case_vignettes.md`. Days are offsets from line
+1's start (`d+0`), and every offset is derived from the setting that decides
+it, so a case moves when its setting does. It is a specification, not an
+observed result: nothing runs a patient through the engine to confirm it. A case
+marked `derived` follows from the rule as written; one marked `to_confirm` is a
+reading of how the rules interact that the first warehouse run settles. Those
+cluster where clinical intent is not visible in claims: tandem versus salvage
+transplant, bridging versus a new regimen, melphalan as conditioning versus
+therapy, a returning drug versus a re-challenge, a biosimilar switch, and early
+refills. `lot/validation/tests/test_vignettes.R` fails if a rule here cites a
+case that does not exist, or a case is cited by no rule.
 
 ---
 
@@ -102,10 +104,10 @@ the settings loader fills any variable that is unset **or empty** from
 `STUDY_START` and `STUDY_END` are **not** pinned. They belong to the cohort,
 are passed per run, and are recorded in `LOT_RUN_METADATA`.
 
-**`LOT_RULES_EPOCH`** is the date these rules last changed. The study package
-refuses any LOT run whose `LOT_BUILD_STATUS` row was last updated on or before
-it, so lines built under earlier rules cannot be read as the study's. It ships
-as `2026-09-22` in `variables/config.csv`, and the value applied is recorded in
+**`LOT_RULES_EPOCH`**, set in `variables/config.csv`, is the date these rules
+last changed. The study package refuses any LOT run whose `LOT_BUILD_STATUS` row
+was last updated on or before it, so lines built under other rules cannot be
+read as the study's, and records the value applied in
 `S_RUN_METADATA.LOT_RULES_EPOCH`. The study package's test suite fingerprints
 `lot/engine` (its R and `config.csv`) and fails when either changes, until the
 epoch and its pinned fingerprints are moved with it.
@@ -159,13 +161,10 @@ rather than a treatment record, and it is the mechanism behind §3.3, §4.2 and
 ### 3.1 Line 1 starts at the first non-steroid MM agent
 
 The earliest `MAP_START_DT` the patient has, over episodes whose class is not
-`STEROID` — `min(MAP_START_DT) ... WHERE MAP_MED_CLASS <> 'STEROID'`, grouped
-per patient. That date is `LOT1_START_DT`, and every window in §3 is measured
+`STEROID`. That date is `LOT1_START_DT`, and every window in §3 is measured
 from it. A patient whose earliest MM claim is a corticosteroid starts line 1 at
-the first oncology agent instead.
-
-A patient with no non-steroid episode at all gets no line, and so no row in
-`LOT_LONG`.
+the first oncology agent instead; a patient with no non-steroid episode at all
+gets no line, and so no row in `LOT_LONG`.
 
 ### 3.2 Line 1's induction window is 60 days
 
@@ -260,22 +259,19 @@ Non-steroid agents from the start date through day 29
 
 The test is on `MAP_START_DT` — an episode *beginning* inside the window — and
 never on `MAP_END_DT`. Cover running through the window does not put an agent
-in the regimen. Nor does a dispense inside the window, if that agent's cover was
+in the regimen. Nor does a dispense inside the window if that agent's cover was
 already live: a claim arriving under live cover extends the episode it is
-already in (§2.3) and opens no new one, so there is no episode start for this
-test to find.
+already in (§2.3), so there is no episode start for this test to find.
 
 That inverts the intuition. An agent from the previous line joins this line's
-regimen only if its cover **lapsed** and it restarted inside the window. The
-more continuously a patient stays on it, the more certainly it is absent from
-the later regimen — a patient taking lenalidomide without a break has one
-episode, starting at line 1, and it can never be seen by any later line's
-window.
+regimen only if its cover **lapsed** and it restarted inside the window. A
+patient taking lenalidomide without a break has one episode, starting at line
+1, and no later line's window can ever see it.
 
-There is no prior-regimen exclusion here. `lot{n}_induction_meds` would take a
-previous-line agent; what keeps it out is only that it has no episode start to
-offer. That is a different test from §4.3, which stops the same agent
-*starting* a line and is unconditional.
+There is no prior-regimen exclusion here: what keeps a previous-line agent out
+of `lot{n}_induction_meds` is only that it has no episode start to offer. That
+is a different test from §4.3, which stops the same agent *starting* a line and
+is unconditional.
 
 Whether membership should be an episode start or any fill in the window is an
 open question.
@@ -304,11 +300,8 @@ candidates read the same definition.
 So a same-drug re-challenge after any gap is **one line**, spanning the break.
 `map_discon_gap_days` decides when a drug's cover has run out (§5.1) and where
 an episode boundary falls (§2.3). It does not decide whether the return opens a
-line.
-
-`lot/qc/trace_returns.R` shows, on real patients, every regimen drug that came
-back to its line after a confirmed break, with its raw episodes beside the final
-lines.
+line. `lot/qc/trace_returns.R` shows, on real patients, every regimen drug that
+came back to its line after a confirmed break.
 
 §4.8 is the same idea for a drug of an **earlier** line: returning after
 exactly one agent advanced the line, it joins the line it returns in.
@@ -321,7 +314,8 @@ The substitute is unioned into the previous line's regimen for this test, so it
 is excluded from `d_MED` the same way the reference product is.
 `permissible_subs.csv` names the pairs, one row per pair: a row makes the pair
 one agent in both directions, so a pair the file lists both ways is read once,
-and a drug listed as its own substitute is dropped. The loader logs each.
+and a drug listed as its own substitute is dropped. The loader logs each. A
+substitution the file does not list reads as a new agent and starts a line.
 
 ### 4.5 Same-day starts break `SCT_ALLO > CART > SCT_AUTO > MED`
 
@@ -338,21 +332,22 @@ An ALLO and a CAR-T on one day give `SCT_ALLO`; either of them with an AUTO on
 the same day gives the procedure, not the AUTO; any of the three with a
 medication gives the procedure. `10_lot2_5_base.R`.
 
-This is the **starting** order. The ending cascade asks a different question and
-is not its mirror: §7.2 drops every AUTO on or after the first allogeneic or
-line-ending CAR-T before any date is compared, so there is no AUTO left for a
-tie to reach.
+This is the **starting** order. The ending cascade is not its mirror: §7.2
+drops every AUTO on or after the first allogeneic or line-ending CAR-T before
+any date is compared, so there is no AUTO left for a tie to reach.
 
 ### 4.6 An allogeneic line spans one day and carries no regimen
 
 Worked example: `allo_single_day` / `allo_after_failed_auto`.
 
 `allo_lot_span` is `single_day`, and induction rows are suppressed for an
-ALLO-started line.
+ALLO-started line, so it has no regimen string: anything reading
+`LOT_BASE_MEDS` to decide whether a line exists will miss it.
 
-One thing lifts it: a melphalan course the line was carried to (§4.7). The
-line then runs to the end of that cover instead of ending on its own start
-date. Nothing else reaches it — the short-circuit is tested before any run-out.
+One thing lifts the single day: a melphalan course the line was carried to
+(§4.7). The line then runs to the end of that cover instead of ending on its own
+start date. Nothing else reaches it — the short-circuit is tested before any
+run-out.
 
 ### 4.7 A short melphalan course outside induction does not start a line
 
@@ -363,12 +358,13 @@ Melphalan doses closer together than `melp_exposure_days` are one course. A
 course covering `melp_simple_course_days` or fewer days, whose first day falls
 outside the line's own induction window, does not end the line and does not
 start the next one. The line is carried instead to the last day that course
-covers, capped by the line's own span.
+covers, capped by the line's own span. A course inside the induction window, or
+one covering more days than the cap, is left to the engine untouched.
 
 The exception is another agent starting while the course still covers: one the
 engine would itself accept against this line, non-steroid, and not melphalan.
-Then the line does advance — and it advances on the **melphalan** date, not the
-later agent's, so the boundary sits where treatment actually changed.
+Then the line does advance — on the **melphalan** date, not the later agent's,
+so the boundary sits where treatment actually changed.
 
 Why melphalan: a brief course outside induction is usually transplant
 conditioning, and conditioning is part of the transplant rather than a line of
@@ -379,11 +375,19 @@ short, and how far the line is carried. A medical melphalan claim carries the
 imputed `medical_day_supply`, so a single administration covers 28 days.
 
 **The confirming agent has to be new.** A drug from the **immediately
-previous** line coming back is the returning drug, not a new one — §4.8 bundles
-it into the line it returns in — so it confirms nothing. The rule settles both
-directions: a course this rule suppressed is not a line-defining agent for
-§4.8's count either, and it joins no regimen (a held course is in neither
-`LOT_BASE_MEDS` nor `LOT_MED_CNT`).
+previous** line coming back is the returning drug — §4.8 bundles it into the
+line it returns in — so it confirms nothing. A drug last given further back is a
+new agent here and confirms like any other; §4.3 excludes only the previous
+regimen, so such a drug can already open a line, and reading any wider here
+would make it too old to confirm a course and new enough to start a line at
+once. In the other direction, a course this rule suppressed is not a
+line-defining agent for §4.8's count, and it joins no regimen (a held course is
+in neither `LOT_BASE_MEDS` nor `LOT_MED_CNT`).
+
+**A steroid never confirms a course.** Corticosteroids are not oncology agents
+(§2.1), so melphalan given with one is still melphalan on its own: the course
+stays suppressed and the line is carried to its cover. That is what "melphalan
+mono" means, and nothing wider.
 
 **And the melphalan itself may be the returning drug.** A course this rule
 confirms starts the next line on its own first day, so §4.8 stands back from it,
@@ -394,12 +398,12 @@ Worked example: `melp_confirmed_beats_the_fold`.
 **One course, one answer — for both verdicts.** A suppressed course comes off
 the candidate list at every one of its doses, and so does a confirmed one: only
 its first day is the boundary, and the doses after that belong to the line that
-day opened. The line they fall in is carried to reach them, exactly as it is for
-a suppressed course. Worked example: `melp_confirmed_course_is_one_course`.
+day opened, which is carried to reach them. Worked example:
+`melp_confirmed_course_is_one_course`.
 
 **A confirmed course is a boundary for other drugs too.** It opens the next
-line, so a drug returning after it is returning into that line, not into the
-one before — §4.8 counts it as an advance like any other agent. A *suppressed*
+line, so a drug returning after it is returning into that line, not the one
+before — §4.8 counts it as an advance like any other agent. A *suppressed*
 course opens nothing, so it is no advance at all.
 
 **A transplant inside a course does not split it.** The course is judged once,
@@ -416,23 +420,15 @@ doses that fall in it; the transplant ends the earlier line where it falls
 gives that line the transplant date alone and no regimen; its window *end* is
 its start date, so an event coded on the allograft date would read as inside it
 by arithmetic alone. It is not. A melphalan course whose first dose falls on the
-allograft date is not inside that line's window, so §4.7 judges it like any
-other course outside one; and an autologous transplant coded on that date is not
-the in-window first half of a tandem pair, so its partner is free to take a line
-of its own (§6.3).
-
-**A steroid never confirms a course.** Corticosteroids are not oncology agents
-(§2.1), so melphalan given with one is still melphalan on its own: the course
-stays suppressed and the line is carried to its cover. That answers the study
-team's "melphalan mono" question, and nothing wider — the agent that confirms
-has to be a non-steroid drug.
+allograft date is judged like any other course outside a window; and an
+autologous transplant coded on that date is not the in-window first half of a
+tandem pair, so its partner is free to take a line of its own (§6.3).
 
 **A returning drug does not confirm a course, even where it opens a line.**
 Where a transplant or CAR-T opened the line, §4.8 refuses the fold, so the
 returning drug is line-defining and starts the next line **on its own date**.
 It still does not confirm the melphalan course, so the line is not backdated to
-the melphalan date. The same history with a drug the patient never had gives
-the earlier start and puts the course in the regimen:
+the melphalan date:
 
 | arriving while a short course covers | the next line starts | its regimen |
 |---|---|---|
@@ -446,28 +442,14 @@ a course nobody started a new regimen on, so the drug opens a line where the
 engine's own rules give it one and takes nothing back to the melphalan date.
 
 **A drug that opened a line is a boundary, and an agent after one belongs to
-the line it opened.** That is the last row: the returning drug starts its line
-on its own date, so the new agent after it arrives inside that line and is no
-candidate against the one before. It cannot make that line's course advance,
-and the course is held where it falls. A transplant gets the same test — a
-course on day 100 with an allograft on 102 and a new drug on 105 is not
+the line it opened.** That is the last row: the new agent arrives inside the
+line the returning drug opened, so it is no candidate against the one before,
+cannot make that line's course advance, and the course is held where it falls.
+A course falling after the return likewise belongs to the line the return
+opened, not to the procedure's line before it. A transplant gets the same test
+— a course on day 100 with an allograft on 102 and a new drug on 105 is not
 confirmed by that drug. Two drugs starting on the **same** day are not this
 case: they open one line together, and the new one confirms as it would alone.
-
-**A course belongs to the line the returning drug opened, not the one before
-it.** Ownership asks the same question as the fold does. Where a procedure
-opened the line, §4.8 refuses the fold, so the return is line-defining there,
-and a course falling after it belongs to the line the return opened, not to the
-procedure's.
-
-**"Not new" is the previous line only, the same scope §4.8's fold set reads.**
-A drug last given further back than that is a new agent here and confirms a
-course like any other. §4.3 excludes only the previous regimen, so such a drug
-can already open a line; reading any wider here would make it too old to confirm
-a course and new enough to start a line at once.
-
-A course inside the induction window, or one covering more days than the cap,
-is left to the engine untouched.
 
 **One line owns a course** — the latest whose start comes before it. Another
 line-defining agent arriving first disqualifies the course from an earlier
@@ -478,11 +460,10 @@ drugs ran out still belongs to the line when nothing happened in between.
 **And a line judges only the courses it can see** — one starting inside it, and
 one that started earlier and still covers into it, which is the course a
 transplant splits. A course whose cover ran out before a line began belongs to
-an earlier one, so the later line does not judge it. So a conditioning course an
-earlier line held inside its own window is not re-judged and suppressed by a
-later one, and stays available to §4.8 as a returning drug's previous dose; and
-no line is handed a run-out that falls before its own start, which QC check
-`B7` refuses.
+an earlier one. So a conditioning course an earlier line held inside its own
+window is not re-judged and suppressed by a later one, and stays available to
+§4.8 as a returning drug's previous dose; and no line is handed a run-out that
+falls before its own start, which QC check `B7` refuses.
 
 A course inside the induction window of the line that owns it is inside an
 induction window, and §4.7 asks whether a course is outside **any** of them. So
@@ -559,10 +540,9 @@ a line start and never reaches the test. Worked example:
 **The two-or-more row cannot fire while the fold set is the previous line's
 regimen.** A drug is in that regimen only through an episode starting at or
 after that line's start (§3.3), and the return has to be inside the line being
-built, so exactly one line can have opened in between. A drug from further
-back is outside the set and is simply a new agent:
-`returning_drug_two_lines_back`. The row states the rule, with the scope settled at the previous line; widening that scope is what
-would make it reachable, and that would be a change to the settled rule.
+built, so exactly one line can have opened in between. A drug from further back
+is outside the set and is simply a new agent: `returning_drug_two_lines_back`.
+Only a wider fold set would make the row reachable.
 
 **A return only joins the line that actually contains it.** While lines are
 built in order the count is relative to the line being built, so a return with
@@ -616,11 +596,10 @@ course. A held melphalan course still joins neither the span's regimen nor its
 count (§4.7), and a course the melphalan rule suppressed is not a line-defining
 agent here either.
 
-`lot/qc/trace_foldin.R` writes the raw episodes and final lines of the patients
-the fold touched in a finished run; `lot/qc/trace_returns.R` puts the folds
-beside the other two ways a drug comes back (§4.3, and opening a line).
-
-`lot/engine/R/foldin_rule.R`.
+`lot/engine/R/foldin_rule.R`. `lot/qc/trace_foldin.R` writes the raw episodes
+and final lines of the patients the fold touched in a finished run;
+`lot/qc/trace_returns.R` puts the folds beside the other two ways a drug comes
+back (§4.3, and opening a line).
 
 ---
 
@@ -636,8 +615,9 @@ Worked example: `map_gap_within` / `map_gap_beyond`.
 A patient has run out of a drug when the gap from `MAP_END_DT` to the next
 `MAP_START_DT` is `map_discon_gap_days` **or more**. A gap of that length from
 the last `MAP_END_DT` to the end of observation counts too. The predicate is
-`>=`, so the threshold day itself is a gap.
-`lot/engine/R/steps/03_mma_map.R` — `MAP_DISCON_FLG`.
+`>=` on `datediff`, so a last covered day of d+59 and a return on d+149 is a
+gap; a return on d+148 is not. `lot/engine/R/steps/03_mma_map.R` —
+`MAP_DISCON_FLG`.
 
 Per drug, not per line. The line has run out when its last base agent has.
 
@@ -692,11 +672,11 @@ Unconfirmed on both counts, the run-out date is dropped and the line falls
 through the cascade (§7.1) to `DEATH` or `STUDY_END` — censored at the end of
 observation rather than closed at the last fill.
 
-Why: no longer seeing fills and having stopped treatment are different claims,
-and near the end of the data they cannot be told apart. A patient who comes back
-has replaced the absence with evidence, so a return confirms; waiting anyway
-would swallow their next line, since a line censored to `OBS_END_DT` leaves
-nothing after it for the next one to start on.
+Why: an absence of fills and a stop in treatment are different claims, and near
+the end of the data they cannot be told apart. A patient who comes back has
+replaced the absence with evidence, so a return confirms; waiting anyway would
+swallow their next line, since a line censored to `OBS_END_DT` leaves nothing
+after it for the next one to start on.
 
 **Where it is applied.** In the end step (`06_lot1_end.R` and the LOT2-5
 equivalent), not where the run-out is computed — `POST_RUNOUT_TRIGGER_FLG` needs
@@ -714,9 +694,9 @@ is censored by this rule, then classified `DEATH` by the cascade.
 **What it moves.** End reasons, and for the censored lines their end dates and
 `LOT_BASE_LENGTH`. Only patients who were never seen again are affected, so line
 counts are unchanged. The effect concentrates in the lines closest to the data
-cutoff, so later lines shift more than line 1. It also covers an agent still
-covered at the end of observation, which is never flagged as run out and so
-cannot give the line a discontinuation date.
+cutoff, so later lines shift more than line 1. An agent still covered at the end
+of observation is never flagged as run out, so it gives the line no
+discontinuation date either.
 
 QC check `B8` fails a run on any `DISCONTINUATION` inside the window with no
 later line to confirm it. Confirmed-by-return lines are legitimate, and lines at
@@ -734,17 +714,19 @@ about AUTO.
 
 Worked example: `auto_window_within` / `auto_window_beyond`.
 
-Claims within `sct_auto_window_days` of a window's first claim are one
-transplant, and the **last** date in the window is taken — the earlier claims
-are workup, the last is the infusion. Where a window straddles the tandem
-boundary the date closest to that boundary is taken instead, so the tandem test
-(§6.3) lands correctly.
+Claims 0 to `sct_auto_window_days` days after a window's first claim are one
+transplant (`<=`, so a 14-day window counting its first day), and the **last**
+date in the window is taken — the earlier claims are workup, the last is the
+infusion. Where a window straddles the tandem boundary the date closest to that
+boundary is taken instead, so the tandem test (§6.3) lands correctly.
 
 ### 6.2 AUTO events under 60 days apart merge
 
 After the grouping in §6.1, an event less than `sct_auto_gap_days` after the
 last one kept is dropped into it. §6.1 groups codes into events; this merges
-events that are too close together to be two transplants.
+events that are too close together to be two transplants — so the second
+window in `auto_window_beyond`, a day outside the first, is a second billing
+episode and not a second transplant.
 
 ### 6.3 A second AUTO within 180 days is a planned tandem
 
@@ -783,22 +765,20 @@ cannot keep a line open that has already ended:
     line 1 ended 120 days before AUTO 2 and cannot contain it. AUTO 2
     opens line 2 as SCT_AUTO.
 
-What gives it that line is the next line's candidate rule: §4.1's `d_AUTO`
-condition (ii) exempts an AUTO within `sct_tandem_days` of the one before it
-only where **that earlier AUTO is itself inside the window**. Here it is not, so
-AUTO 2 is a candidate and opens line 2. Where the earlier AUTO is in the window
-the exemption holds, the pair stays inside the line it belongs to, and no line
-opens on the partner.
+What gives it that line is §4.1's `d_AUTO` condition (ii), which exempts an AUTO
+within `sct_tandem_days` of the one before it only where **that earlier AUTO is
+itself inside the window**. Here it is not, so AUTO 2 is a candidate and opens
+line 2. Where the earlier AUTO is in the window the exemption holds, the pair
+stays inside the line it belongs to, and no line opens on the partner.
 
 QC check `E5` finds an event that falls through both: it starts from the
 processed transplants rather than from the lines, so an event in no line has a
 row to be wrong on.
 
-The alternative — a tandem holding the earlier line open through the second
-transplant wherever the first one sits — is not the rule. A hold date reaches
-forward, so the extended line would swallow the additions and allografts falling
-in between, and it would move patients who have no unowned transplant to place
-at all.
+A tandem holding the earlier line open through the second transplant wherever
+the first one sits is not the rule. A hold date reaches forward, so the extended
+line would swallow the additions and allografts falling in between, and it would
+move patients who have no unowned transplant to place at all.
 
 ### 6.4 A CAR-T inside line 1's induction window is part of line 1
 
@@ -809,8 +789,6 @@ The infusion does not end line 1 and does not start one — **for as long as lin
 1 is running**. Line 2 onward keep their own windows, and a CAR-T there follows
 the ordinary rules.
 
-The exemption has two conditions, and the second matters as much as the first:
-
 | CAR-T timing | line 1 | result |
 |---|---|---|
 | inside the 60-day window | still running on that date | absorbed into line 1 — ends nothing, starts nothing |
@@ -820,11 +798,10 @@ The exemption has two conditions, and the second matters as much as the first:
 Row 2 is there because the window is measured from line 1's **start** —
 `TX_DT BETWEEN LOT1_START AND date_add(LOT1_START, 59)`. The window therefore
 outlives the line whenever line 1 ends inside its own 60 days, and without the
-second test an infusion in that gap would belong to nothing.
-
-It does not extend line 1 to swallow a CAR-T that arrived after line 1 had
-already ended for some other reason. Line 1 keeps the end the other rule gave
-it; the infusion opens the next line.
+second test an infusion in that gap would belong to nothing. The rule does not
+extend line 1 to swallow a CAR-T that arrived after line 1 had already ended for
+some other reason: line 1 keeps the end the other rule gave it, and the infusion
+opens the next line.
 
 Turning it off needs `LOT_CONTRACT_OVERRIDE=TRUE` and
 `APPLY_CART_INDUCTION_RULE=FALSE`, and is recorded as a deviation like any other
@@ -902,7 +879,13 @@ nothing. Death is excluded from it explicitly rather than by the ordering.
 
 The reason names which type it was — `SCT_AUTO`, `SCT_ALLO` or `SCT_CART`. On
 different dates there is no priority between the three; an ALLO does not
-outrank an earlier AUTO.
+outrank an earlier AUTO. For example, with agent A covering d+0 to d+300, a
+first AUTO on d+30, a second on d+211, agent B added on d+220 and an ALLO on
+d+250: line 1 ends `SCT_AUTO` on d+210. The first AUTO is line 1's own (§3.4);
+the second is 181 days after it, past `sct_tandem_days`, so it is excess, and
+its day-before is earlier than B's (d+219) and the ALLO's (d+249). Line 2 opens
+on the second AUTO, takes B into its regimen and ends `SCT_ALLO` on d+249; the
+allograft is line 3, one day long (§4.6).
 
 An AUTO on the same day as an ALLO or a CAR-T is not a tie. Both sites drop
 every AUTO on or after the first ALLO or line-ending CAR-T before any date is
@@ -917,10 +900,9 @@ the same.)
 
 `SCT_CART` therefore arises two ways: a line that ends at a CAR-T, and a
 CAR-T-started line with no consolidation agent, which spans a single day.
-Neither applies to a CAR-T inside line 1's induction window (§6.4).
-
-That single-day span, like the ALLO one in §4.6, is lifted by a melphalan
-course the line was carried to (§4.7).
+Neither applies to a CAR-T inside line 1's induction window (§6.4). That
+single-day span, like the ALLO one in §4.6, is lifted by a melphalan course the
+line was carried to (§4.7).
 
 ### 7.3 An added agent then a CAR-T within 45 days is `CART_INIT`
 
@@ -951,17 +933,16 @@ an addition. At line 1 that puts the earliest possible `MED_ADD` on day 60.
 is still open opens no episode (§2.3), so it is never a candidate and the line
 does not end.
 
-**Two agents are taken off this list by rules of their own**, so `MED_ADD` is
-narrower than it reads here: a short melphalan course outside induction (§4.7),
-and a returning earlier-line drug the count folds (§4.8). Both are held inside
-the line instead, which is why the line's run-out can sit later than its own
-drugs' cover.
+**Two agents are taken off this list by rules of their own**: a short melphalan
+course outside induction (§4.7), and a returning earlier-line drug the count
+folds (§4.8). Both are held inside the line instead, which is why the line's
+run-out can sit later than its own drugs' cover.
 
 ### 7.5 Death, and the run-out it can displace
 
-`DEATH` is the one branch not gated on a date comparison (§7.1). Its only condition
-is `POST_RUNOUT_TRIGGER_FLG = 0` — no line-opening trigger between the run-out
-and the death:
+`DEATH` is the one branch not gated on a date comparison (§7.1). Its only
+condition is `POST_RUNOUT_TRIGGER_FLG = 0` — no line-opening trigger between the
+run-out and the death:
 
 ```sql
 WHEN DEATH_DT IS NOT NULL AND DEATH_DT <= OBS_END_DT
@@ -982,8 +963,8 @@ The middle row is the displacement: the run-out is earlier, and the line still
 ends on the death, because with no trigger between the two the `DEATH` branch is
 reached before `DISCONTINUATION` and nothing gates it on being the earlier date.
 
-The last row is why that condition exists. A patient who ran out, then restarted or
-had a transplant, and only later died has an end for line 1 that is not the
+The last row is why that condition exists. A patient who ran out, then restarted
+or had a transplant, and only later died has an end for line 1 that is not the
 death — the run-out is the line's real end, the trigger opens the next line
 (§5.3 confirms the run-out by that same trigger), and the death falls in
 whichever line is running when it arrives.
@@ -1007,7 +988,7 @@ Worked example: `belantamab_any_line`.
 
 `lot/engine/R/line_criteria.R`. A criterion is an expression over `lot_long`
 plus the lines it applies to, declared as data rather than edited into the step
-SQL (`FILES.md`, "Adding a criterion to a line"). One is shipped and on.
+SQL (`CONTENTS.md`, "Adding a criterion to a line"). One is shipped and on.
 
 **`no_belantamab`** — no belantamab (`BELA`) anywhere from the patient's first
 line to the end of observation. It asks `map_stacked` over that whole span
@@ -1019,7 +1000,8 @@ round to constructing".
 LOT N is defined against LOT N−1 — removing a middle line would leave LOT1
 beside LOT3. Because this criterion is patient-level the test fails on every
 line, so truncation leaves the patient with none. They are absent from
-`LOT_LONG_FINAL` and present in `LOT_LONG`.
+`LOT_LONG_FINAL` and present in `LOT_LONG`; the difference between the two
+tables is exactly what the criteria removed.
 
 ---
 
@@ -1027,7 +1009,9 @@ line, so truncation leaves the patient with none. They are absent from
 
 Worked example: `line_beyond_max`.
 
-`max_lot`. `check_lot_long()` refuses any line number outside `1..max_lot`.
+`max_lot`. `check_lot_long()` refuses any line number outside `1..max_lot`. A
+patient's therapy after line 5 is not represented, so a count of lines is a
+count of lines **built**, not of lines received.
 
 ---
 
@@ -1044,21 +1028,8 @@ therefore includes no maintenance line.
 
 ## 11. Which file holds which rule
 
-| Rule | File |
-|---|---|
-| Settings, contract, metadata, the `LOT_LONG` checks | `lot/engine/R/build_lot.R` |
-| Episodes, day supply, the run-out flag | `lot/engine/R/steps/03_mma_map.R` |
-| Line 1 start, regimen, run-out, added medication | `lot/engine/R/steps/04_lot1_base.R` |
-| Transplant events, grouping, merging, tandem | `lot/engine/R/steps/05_sct.R` |
-| Line 1's transplant summary | `lot/engine/R/steps/05b_lot1_sct.R` |
-| Line 1's end cascade and the confirmation buffer | `lot/engine/R/steps/06_lot1_end.R` |
-| Lines 2-5: start, regimen, end, confirmation buffer | `lot/engine/R/steps/10_lot2_5_base.R` |
-| The prior-regimen rule and the run-out chain | `lot/engine/R/prior_regimen.R` |
-| The melphalan short-course rule — §4.7 | `lot/engine/R/melp_rule.R` |
-| The returning-drug fold-in — §4.8 | `lot/engine/R/foldin_rule.R` |
-| Line criteria and truncation | `lot/engine/R/line_criteria.R` |
-| The CAR-T induction rule | `lot/engine/R/cart_rule.R` |
-| The worked examples | `lot/validation/R/vignettes.R` |
+Each section above names the file its rule lives in; `CONTENTS.md`, "`engine/` —
+builds the lines", says what every file of the engine does.
 
 ## 12. What stops a run
 
@@ -1084,7 +1055,7 @@ tables under that prefix until a run completes. The build stops on:
   (`LOT_IGNORE_ACTIVE_RUN=TRUE` when that row was left by a killed process).
 - **The code lists.** A file missing, unhashable, changed while it was read,
   missing a column, or empty; a consistency check that is not waivable, or a
-  waivable one not named in `CODELIST_WAIVERS` (`FILES.md`, "The code-list
+  waivable one not named in `CODELIST_WAIVERS` (`CONTENTS.md`, "The code-list
   checks"); a code list too short to be the production one; an SCT code list
   naming two transplant types for one code or a type or code type nothing
   reads; with the belantamab criterion on, no code-list row spelled
