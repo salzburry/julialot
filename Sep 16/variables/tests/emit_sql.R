@@ -5,7 +5,7 @@
 # reaches the end of the function - and a suite that cannot tell you that will
 # pass over a statement chopped in half by a stray semicolon, a CTE list with a
 # comma missing, and a `[[` on a name the vector does not carry. All three of
-# those shipped.
+# those bundled.
 #
 # So: load the package into a private environment, replace the handful of
 # functions that touch Spark with recorders, and run every module for every
@@ -85,7 +85,7 @@ load_package_env <- function(here) {
 # Runs every module for every cohort against the recorders.
 #
 # `cfg_edit` is applied to the configuration before the run, so a caller can
-# exercise a setting other than the shipped default - the follow-up readings
+# exercise a setting other than the bundled default - the follow-up readings
 # and the treatment-pattern switches each emit different SQL. `env_edit` is
 # applied to the loaded package before anything reads it, so a caller can
 # change a REGISTRY - add a criterion, drop one from a cohort's list - and see
@@ -178,7 +178,7 @@ capture_emitted_sql <- function(here = ".", cfg_edit = identity,
     errors[[what]] <<- conditionMessage(e)
 
   # The runner's OWN pre-module path, called rather than re-implemented, so
-  # the branch the shipped default takes is the one emitted. A harness that
+  # the branch the bundled default takes is the one emitted. A harness that
   # paraphrases the code it is testing tests the paraphrase.
   tryCatch(env$build_inputs(NULL, cfg, mods),
            error = function(e) note("build_inputs", e))

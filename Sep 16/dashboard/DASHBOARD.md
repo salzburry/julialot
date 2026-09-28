@@ -280,7 +280,7 @@ names a directory. Every other upper-case column is set as an environment
 variable for that run and nothing else, so **the column name is the variable
 name** and a new open question is available the moment the package reads it. A
 value that is itself a list, such as `ED_DEFINITION`'s `revenue,pos`, is quoted
-in the file. The test suite runs every shipped row through the package's
+in the file. The test suite runs every bundled row through the package's
 config, so a value the package would refuse fails there rather than on the
 cluster.
 
@@ -289,7 +289,7 @@ and `COHORT_PREFIX` come from the Job's environment, the study package's
 `config.csv`, or a column of the same name; without any of them the Job stops
 before the first build and names what is missing, since a read prefix left
 blank would be each scenario's own. Without `CODELIST_DIR`, every module whose
-code list is still the shipped blank template is left out of every scenario.
+code list is still the bundled blank template is left out of every scenario.
 Anything else step 3 was given - `LOT_CODE_MD5`, `MODULES`, `SKIP_MODULES` -
 is set on the Job too.
 

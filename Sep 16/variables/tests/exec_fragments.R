@@ -67,7 +67,7 @@ FRAG_ROWS <- list(
 # Each entry: the SQL to evaluate, and the ID -> value the rule requires.
 #
 # `sql` is built by the fragment under test, never written out here - the point
-# is to run the shipped expression.
+# is to run the bundled expression.
 frag_cases <- function(cfg) list(
 
   # s7.1 and s7.8.1 are explicit about which endpoint counts, so each

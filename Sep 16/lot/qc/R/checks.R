@@ -780,7 +780,7 @@ LOT_QC_CHECKS <- list(
                     "the prior-regimen veto so that date can be the boundary - ",
                     "so a line already holding melphalan from an earlier course ",
                     "can legitimately name melphalan as its added medication. ",
-                    "The shipped fixture SB is exactly that patient, and this ",
+                    "The bundled fixture SB is exactly that patient, and this ",
                     "check called it a failure. Exempted only while the rule is ",
                     "on, and only for melphalan: any other drug in this state ",
                     "is still the disagreement the check was written for."),

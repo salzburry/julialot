@@ -384,12 +384,12 @@ Who applies each criterion is `IE_CRITERIA.md` "9. Who applies each criterion".
 
 The protocol defines almost every criterion and outcome by reference to a code
 list, and puts the lists in Annexes 2, 3 and 7. Code lists are **CSV files on
-production**, not warehouse tables, and are not shipped with the code. Each
+production**, not warehouse tables, and are not bundled with the code. Each
 stage names its directory in its own `CODELIST_DIR`, and every loader records
 each file's md5 and row count on the run, so a number can be traced to the file
 that produced it.
 
-**`CODELIST_DIR`** blank means this package's own `codelists/`, which ships the
+**`CODELIST_DIR`** blank means this package's own `codelists/`, which holds the
 shape of every file it reads with **no codes**: a run pointed there leaves out,
 by name, the modules that need a list (or stops if `MODULES` names one). On
 production point it at the real directory:
@@ -452,7 +452,7 @@ widened, which is the broad reading of Q2.
   well. `icd_family` must be one of `9 / ICD9 / ICD-9 / ICD9DIAG` or
   `10 / ICD10 / ICD-10 / ICD10DIAG`; anything else, or a blank, stops the run. A
   claim whose `ICD_FLAG` names neither family matches nothing and is reported
-  (Q24); the cohort build's ceiling `NDMM_ICD_FLAG_MAX_ROWS` ships unset.
+  (Q24); the cohort build's ceiling `NDMM_ICD_FLAG_MAX_ROWS` is unset by default.
 - **NDC** - digits only. Eleven digits as they stand; ten left-padded (the 4-4-2
   layout); any other count gets no key. A ten-digit NDC written 5-3-2 or 5-4-1
   pads to the wrong key, so the cohort build's `check_ndc_shape()` profiles both
@@ -466,7 +466,7 @@ widened, which is the broad reading of Q2.
 `R/codelists.R` declares eleven files; a name it does not declare cannot be
 loaded.
 
-| file | required columns | matched against | read by | ships with | codes come from |
+| file | required columns | matched against | read by | included | codes come from |
 |---|---|---|---|---|---|
 | `mm_dx.csv` | `dx`, `icd_family` | `MED_DIAGNOSIS.DIAG`, `CONFINEMENT.DIAG1-2` | `comorbidity` (MM adjustment), `hcru` (MM-related hospitalisation), `malignancy` (to refuse a myeloma code), `periods` under `DX_DATE_SOURCE=baseline_first_claim` | header only | production |
 | `cl_mma_rollup.csv` | `CL_MEDICATION_FULL`, `CL_MED_CLASS`, `CL_MED_ABBR` | - | the `COHORT_INDEX_EXCLUSIONS` check, resolving agent names to abbreviations; unusable, the check is logged unverified | header only | production |

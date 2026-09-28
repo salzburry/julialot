@@ -214,7 +214,7 @@ canonical_acute_chronic <- function(x, condition = NULL) {
 }
 
 # Where the code lists are. An unset CODELIST_DIR means this package's own
-# codelists/ - the folder ships every shape it reads, so it is complete without
+# codelists/ - the folder holds every shape it reads, so it is complete without
 # anything outside it. Production sets CODELIST_DIR to the real directory.
 resolve_codelist_dir <- function(cfg, here) {
   d <- if (nzchar(cfg$codelist_dir)) cfg$codelist_dir
@@ -227,7 +227,7 @@ resolve_codelist_dir <- function(cfg, here) {
 
 # Checked before any module runs, so a run that cannot finish stops in the
 # first second rather than after the expensive steps. Each list is LOADED
-# rather than stat-ed: codelists/ ships templates with the right columns and no
+# rather than stat-ed: codelists/ holds templates with the right columns and no
 # codes, which a path check would accept.
 #
 # MODULES=all asks for everything that CAN run: a module whose list is unusable

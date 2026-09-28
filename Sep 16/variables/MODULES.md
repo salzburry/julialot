@@ -204,7 +204,7 @@ Whether to regroup or withhold a second stratum is the analyst's call.
 
 **What the package writes, as data.** `R/contract.R` emits one row per table the
 package can write - the module, whether `release` publishes a suppressed copy,
-and the switch that must be on for it. TFLS ships the generated copy and reads
+and the switch that must be on for it. TFLS holds the generated copy and reads
 it instead of restating the registry; its suite regenerates from here and
 compares whenever this package is beside it. Regenerate with
 `write_study_contract(path)` after adding a table to `MODULES` or
@@ -250,7 +250,7 @@ an empty table. The run stops on:
   (blank by default); or finished on or before `LOT_RULES_EPOCH` (default
   `2026-09-22`, moved whenever the LOT rules change; compared by calendar date,
   so a run finished on that date is also refused). The suite fingerprints the
-  engine's R and shipped settings and checks both against the pin the date sits
+  engine's R and bundled settings and checks both against the pin the date sits
   with. The lineage is checked again before the run is recorded complete, so a
   LOT rebuild landing mid-run fails it;
 - a step that produces zero rows, attrition categories that stop partitioning

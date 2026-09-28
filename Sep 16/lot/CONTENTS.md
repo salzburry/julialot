@@ -73,7 +73,7 @@ cohort and could build LOT1 from one version and `LOT_LONG` from another. There
 is no dry-run mode. Each build writes a run log (`PIPELINE_LOG_FILE`, or
 `pipeline_run_<time>_<pid>.log` under `OUTPUT_DIR`) holding the warnings, the
 messages and the `ERROR:` a run stops on. `qc/run_lot_qc.R` exits 1 when any
-check failed, errored or was skipped, so a handover can wait on it.
+check failed, errored or was skipped, so a job can wait on it.
 
 **A sensitivity build** changes a pinned setting, so it is a different
 algorithm: it needs `LOT_CONTRACT_OVERRIDE=TRUE`, goes under a prefix of its
@@ -200,7 +200,7 @@ aimed above `MAX_LOT`, stops the build.
 
 The log names each criterion, whether it was applied and how many patients fail
 it — the disabled ones too — and the same goes into `LINE_CRITERIA_APPLIED`.
-The shipped criterion is `LOT_RULES.md` §8.
+The bundled criterion is `LOT_RULES.md` §8.
 
 #### The funnel
 

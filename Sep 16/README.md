@@ -24,7 +24,7 @@ above it wrote; `lot/` names no cohort and resolves nothing outside itself.
 
 **Code lists are not in here.** They are CSV files on production, read from
 `CODELIST_DIR`; give it to stages 1, 2 and 3. Unset, the study package falls
-back to `variables/codelists/`, which ships the shapes with no codes: under
+back to `variables/codelists/`, which holds the shapes with no codes: under
 `MODULES=all` (the default) a module whose list is unusable is left out by
 name, and a module that `MODULES` names stops the run instead. Every file and
 what it must carry: `variables/DATA_MAPPING.md` "Code lists".

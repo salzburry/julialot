@@ -127,7 +127,7 @@ mod_cohorts <- function(con, cfg, cohort) {
   # A MET_* column is on every row of every cohort, but which of them the
   # verdict is OVER differs: 1L and SEC2L are judged on nine criteria, 2L and
   # 3L on three - N1, N2 and I5 - so MET_X1 to MET_X4 sit on a 2L row without
-  # being part of its verdict. SEC2L drops X2 entirely under the shipped
+  # being part of its verdict. SEC2L drops X2 entirely under the bundled
   # default. An analyst who ANDed the flags would reproduce 1L and get a
   # DIFFERENT cohort at 2L, 3L and SEC2L, with nothing on the row to warn them.
   # So the row carries the list its own cohort is judged on. Not quite the

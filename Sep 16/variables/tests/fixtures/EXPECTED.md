@@ -9,7 +9,7 @@ noticing.
 
 ## Settings these are computed under
 
-The shipped defaults: study period ends **2026-03-31**, 1L index floor
+The bundled defaults: study period ends **2026-03-31**, 1L index floor
 **2019-01-01**, secondary-2L floor **2020-01-01**, baseline **365 days ending
 the day before index**, comorbidity baseline **including** the index day,
 continuous enrolment **365 days before index**, enrolment gaps of **≤ 30 days**
@@ -197,7 +197,7 @@ as Quan's range C00–C97 does.
   `supersedes` carries Quan's hierarchy.
 
 Myocardial infarction is weighted **0** in the fixture because that is Quan
-2011's weight; the 1 that shipped first is the original 1987 Charlson.
+2011's weight; the 1 that bundled first is the original 1987 Charlson.
 
 ### Safety counting — §7.8.1
 

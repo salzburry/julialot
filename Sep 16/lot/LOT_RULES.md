@@ -988,7 +988,7 @@ Worked example: `belantamab_any_line`.
 
 `lot/engine/R/line_criteria.R`. A criterion is an expression over `lot_long`
 plus the lines it applies to, declared as data rather than edited into the step
-SQL (`CONTENTS.md`, "Adding a criterion to a line"). One is shipped and on.
+SQL (`CONTENTS.md`, "Adding a criterion to a line"). One is bundled and on.
 
 **`no_belantamab`** — no belantamab (`BELA`) anywhere from the patient's first
 line to the end of observation. It asks `map_stacked` over that whole span

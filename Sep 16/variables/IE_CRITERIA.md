@@ -410,7 +410,7 @@ what `check_cohort_table()` refuses, are `MODULES.md` "The input cohort table".
 
 **Every `S_COHORT` row says what its verdict is over.** `CRITERIA_ASKED` is the
 list the cohort is judged on: 1L and SEC2L on nine criteria (SEC2L eight under
-the shipped default, which drops X2), 2L and 3L on three - `N1`, `N2`, `I5`.
+the bundled default, which drops X2), 2L and 3L on three - `N1`, `N2`, `I5`.
 `MET_X1`-`MET_X4` sit on every row but are part of the verdict only where the
 list names them, so ANDing the `MET_*` flags reproduces 1L and gets a different
 cohort at 2L, 3L and SEC2L. Use `IN_COHORT`. `I1`-`I3` have no predicate here:

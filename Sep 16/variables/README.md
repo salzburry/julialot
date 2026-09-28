@@ -32,7 +32,7 @@ raw Optum CDM ──────────────► NDMM_COHORT ──�
 There is no 4L cohort - only a 4L start date and 4L regimen. The protocol's
 feasibility count expects **10,514** 1L, **5,179** 2L and **3,127** 3L patients
 before study criteria. The criteria, who applies each and how to change them
-are `IE_CRITERIA.md`. The secondary 2L cohort cannot be built from the shipped
+are `IE_CRITERIA.md`. The secondary 2L cohort cannot be built from the bundled
 cohort table (`MODULES.md` "The secondary 2L cohort's wide input"). Cohort
 settings are changed on the cohort side, `../ndmm/README.md` "Settings".
 
@@ -73,7 +73,7 @@ the production code-list directory.
 | `config.csv` | every setting as `name,value,description`, except `MM_HOSP_POSITION`, which is read from the environment only (default `confinement`, Q27) |
 | `R/registry.R` | what may be selected - cohorts, modules, their dependencies and outputs, the suppression spec - and the selection logic |
 | `R/config_223926.R` | settings resolution and validation, `CONTRACT`, and the readings a run records |
-| `R/contract.R` | what the package writes, as data: one row per table, the copy TFLS ships |
+| `R/contract.R` | what the package writes, as data: one row per table, the copy TFLS holds |
 | `R/db_utils_223926.R` | the connection, statement splitting, retries, table naming, schema guards, the run log |
 | `R/windows.R` | every period the protocol defines, as SQL |
 | `R/person_time.R` | the counting rules: chronic-once, prior history, the acute washout chain |

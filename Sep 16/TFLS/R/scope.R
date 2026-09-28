@@ -113,7 +113,7 @@ reading_is_true <- function(scope, setting)
 #
 # So the package emits the contract - study_contract() in its R/contract.R,
 # derived from the MODULES, SUPPRESSION_SPEC and OPTIONAL_FEATURES the run is
-# itself driven by - and this reads the copy shipped beside it. The lists are
+# itself driven by - and this reads the copy bundled beside it. The lists are
 # authored once. The suite regenerates from the package whenever it is beside
 # this folder and fails on any difference, so the copy cannot quietly diverge
 # from the run that produced it.
@@ -237,7 +237,7 @@ read_study_contract <- function(dir = .tfls_dir()) {
 # version control, and a checkout on another platform can rewrite the line
 # endings without touching a character of the content. The same function, by
 # the same name, sits in the package's R/contract.R; the suite checks the two
-# agree on the shipped file whenever the package is beside this folder.
+# agree on the bundled file whenever the package is beside this folder.
 contract_text_md5 <- function(path) {
   txt <- paste0(paste(readLines(path, warn = FALSE), collapse = "\n"), "\n")
   tmp <- tempfile(); on.exit(unlink(tmp), add = TRUE)
@@ -245,7 +245,7 @@ contract_text_md5 <- function(path) {
   unname(tools::md5sum(tmp))
 }
 
-# Is the contract this copy ships the one the run was driven by?
+# Is the contract this copy holds the one the run was driven by?
 #
 # read_study_contract() refuses a file that is malformed. It cannot refuse one
 # that is well formed and WRONG: a complete, consistent contract from another
@@ -267,20 +267,20 @@ check_contract_binding <- function(md, where, dir = .tfls_dir()) {
   have <- contract_text_md5(file.path(dir, TFLS_CONTRACT_FILE))
   if (!nzchar(want)) {
     cat("  WARNING: the run under ", where, " recorded no contract hash, so ",
-        "whether the contract shipped here is the one it was driven by ",
+        "whether the contract bundled here is the one it was driven by ",
         "cannot be checked. A run of the current study package records ",
         "STUDY_CONTRACT_MD5.\n", sep = "")
     return(invisible(FALSE))
   }
   if (!identical(want, have))
-    stop("The contract shipped here (", TFLS_CONTRACT_FILE, ", md5 ",
+    stop("The contract bundled here (", TFLS_CONTRACT_FILE, ", md5 ",
          substr(have, 1, 8), ") is not the one the run under ", where,
          " was driven by (STUDY_CONTRACT_MD5 ", substr(want, 1, 8), "). It ",
          "says which tables that run wrote and which of them were published ",
          "suppressed, and a different contract can name a table as ",
          "unsuppressed that this run suppressed. Regenerate it from the ",
          "study package that produced the run - write_study_contract() in ",
-         "its R/contract.R - and ship that copy. Nothing was filled.",
+         "its R/contract.R - and bundle that copy. Nothing was filled.",
          call. = FALSE)
   invisible(TRUE)
 }

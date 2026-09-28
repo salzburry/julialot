@@ -396,7 +396,7 @@ MM diagnosis code it can exclude a patient who should be in; on an
 other-cancer or pregnancy code it can keep one who should be out; on a
 clinical-trial code it moves nobody. The finding's list column says which.
 
-- `NDMM_ICD_FLAG_MAX_ROWS` stops the build above a row count. It ships empty,
+- `NDMM_ICD_FLAG_MAX_ROWS` stops the build above a row count. It is empty by default,
   so the build reports at any volume; every run records `icd_ceiling(...)`.
 - A ceiling bounds volume, not composition: the same count on different codes
   still passes. Reading `FINDINGS` is what checks composition:

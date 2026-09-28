@@ -136,7 +136,7 @@ P <- local({
   lapply(p, function(v) as.integer(v)[1])
 })
 
-cat("\n-- the catalogue holds against the settings that ship --\n")
+cat("\n-- the catalogue holds against the default settings --\n")
 runs(check_vignettes(P), "every vignette resolves and every boundary straddles")
 ok(length(VIGNETTES) >= 15,
    paste0("there is a catalogue to check (", length(VIGNETTES), " vignettes)"))

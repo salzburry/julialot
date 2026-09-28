@@ -133,8 +133,8 @@ cat("\nconfig and contract\n")
 {
   cfg <- cfg0()
   ok(length(contract_deviations(cfg)) == 0,
-     "the shipped defaults deviate from the protocol in nothing")
-  ok(is.na(errs(check_settings(cfg))), "the shipped defaults validate")
+     "the bundled defaults deviate from the protocol in nothing")
+  ok(is.na(errs(check_settings(cfg))), "the bundled defaults validate")
   ok(!is.na(errs(with_env(base_env, .env_enum("X", "nope", c("a", "b"))))),
      "an unrecognised enum stops rather than falling back to a default")
 
@@ -387,7 +387,7 @@ cat("\nsuppression\n")
 {
   # The threshold itself. The policy it drives is asserted on the emitted
   # release SQL further down - there is no R implementation to test, and a
-  # second one would be a policy that does not ship.
+  # second one would be a policy that is not used.
   cfg <- cfg0()
   ok(identical(as.integer(cfg$suppress_min_n), 25L),
      "the small-cell floor is 25 patients, as s7.2.3 and s7.8 both say")
@@ -445,12 +445,12 @@ cat("\ncode lists\n")
      "...the other six are left out by name: those on an unusable list with the file, and those that need one of them with the module")
   ok(any(grepl("left out: ", describe_plan(cfg_all, resolve_cohorts(cfg_all), ran))),
      "...and the plan says so before anything is read")
-  # The shipped code lists are shapes without content, so a default run over
+  # The bundled code lists are shapes without content, so a default run over
   # the package's own codelists/ is exactly this: the cohort, its attrition,
   # windows, demographics and outcomes, and nothing on an unfilled list.
   ran_shipped <- suppressMessages(preflight_codelists(suppressMessages(resolve_modules(cfg0())), cfg))
   ok(identical(names(ran_shipped), no_list) && length(attr(ran_shipped, "left_out")) == 7L,
-     "a default run over the shipped lists runs those seven and leaves the seven blocked on the annexes out by name")
+     "a default run over the bundled lists runs those seven and leaves the seven blocked on the annexes out by name")
   ok(identical(names(suppressMessages(preflight_codelists(
        suppressMessages(resolve_modules(cfg0(c(MODULES = "attrition")))), cfg))),
        c("eligibility", "spine", "cohorts", "attrition")),
@@ -1206,7 +1206,7 @@ cat("\nthe rules that hold the numbers up\n")
     # Built from the pinned upstream list, so a fixture cannot invent a column.
     r <- as.list(setNames(rep("", length(LOT_STATUS_COLS)), LOT_STATUS_COLS))
     r$RUN_ID <- "r1"; r$STATE <- "complete"
-    # After the shipped lot_rules_epoch, so the default row is a run this
+    # After the bundled lot_rules_epoch, so the default row is a run this
     # package will read and a test has to ASK for the refusal.
     r$UPDATED_AT <- "2026-09-23 00:00:00"
     r$INPUT_COHORT_TABLE <- cfg0()$input_cohort_table
@@ -1531,16 +1531,16 @@ cat("\nthe rules that hold the numbers up\n")
     # WITHOUT moving the date: no rule moved, so no line did, and moving the
     # date would refuse runs for a change that alters nothing they built.
     # Where a rule changes, the date moves too - that is what the date is for.
-    engine = "75adca30698b86bdb10e1572b7adf6d3",
-    # ...and its shipped settings, which code_fingerprint() does not read.
+    engine = "dc009c8cd41e3e680082307491d2ad5f",
+    # ...and its bundled settings, which code_fingerprint() does not read.
     # Most of what decides a line is pinned in the engine's own CONTRACT and
     # so is inside the R, but the study window is not, and a build reading a
     # different one is not the build this date was set for.
     settings = "e05cfdcd6535d48892812065c4ac2431")
   ok(identical(cfg0()$lot_rules_epoch, EPOCH_PIN$date),
-     "the shipped epoch is the date the rules last changed")
+     "the bundled epoch is the date the rules last changed")
   ok(is.na(lin_check(UPDATED_AT = "2026-09-23 00:00:00")),
-     "a run finished after the shipped epoch is read")
+     "a run finished after the bundled epoch is read")
   ok(!is.na(lin_check(UPDATED_AT = "2026-09-21 00:00:00")),
      "...and one finished the day before it is not")
   e_ep <- lin_check(UPDATED_AT = "2026-09-21 00:00:00")
@@ -1565,7 +1565,7 @@ cat("\nthe rules that hold the numbers up\n")
      "...and the message says on or before, which is what the check does")
 
   # Which floor applied is on the run's own record, or a reader cannot tell a
-  # run that cleared the shipped epoch from one that cleared a lowered one.
+  # run that cleared the bundled epoch from one that cleared a lowered one.
   ok("LOT_RULES_EPOCH" %in% names(RUN_METADATA_COLS),
      "S_RUN_METADATA carries the epoch the run was accepted against")
 
@@ -1576,7 +1576,7 @@ cat("\nthe rules that hold the numbers up\n")
   # stop exactly those runs.
   #
   # So the engine is fingerprinted - by its OWN function, not a restatement
-  # of it - and compared to the fingerprint the shipped date was set for.
+  # of it - and compared to the fingerprint the bundled date was set for.
   # Change a rule and this stops, saying what to do: move LOT_RULES_EPOCH to
   # the date of the change and re-pin below. It is the one thing that cannot
   # be forgotten, because it is the same edit that changed the rule.
@@ -1600,7 +1600,7 @@ cat("\nthe rules that hold the numbers up\n")
     e <- new.env(parent = globalenv())
     sys.source(file.path(eng, "R", "build_lot.R"), e)
     # What this covers, and what it cannot. The engine's R and the settings
-    # it ships are both here. Its CODE LISTS are not: they live under
+    # it holds are both here. Its CODE LISTS are not: they live under
     # CODELIST_DIR on the platform, so no check in this folder can read
     # them, and a rollup moving a drug to another agent moves lines without
     # touching either fingerprint. That is recorded per run instead, in
@@ -1674,7 +1674,7 @@ cat("\nthe rules that hold the numbers up\n")
     same <- identical(unname(got["engine"]), EPOCH_PIN$engine) &&
       identical(unname(got["settings"]), EPOCH_PIN$settings)
     ok(same,
-       paste0("the shipped epoch is the date THIS engine's rules changed ",
+       paste0("the bundled epoch is the date THIS engine's rules changed ",
               "(engine ", substr(got["engine"], 1, 8), "/",
               substr(got["settings"], 1, 8), ", pinned ",
               substr(EPOCH_PIN$engine, 1, 8), "/",
@@ -1682,7 +1682,7 @@ cat("\nthe rules that hold the numbers up\n")
                 paste0(" - the rules have changed since the epoch was set: ",
                        "move EPOCH_PIN$date to the date of that change, ",
                        "re-pin both fingerprints beside it, and let the ",
-                       "shipped LOT_RULES_EPOCH follow")))
+                       "bundled LOT_RULES_EPOCH follow")))
   })
 
   # 4. A nested cohort takes only patients IN its parent.
@@ -2553,7 +2553,7 @@ cat("\nthe cohort build barred the agents s7.2.1.1 names from the 1L index\n")
   ok(grepl("check_cohort_index_exclusions(con, cfg, lot_run$COHORT_ATTEMPT_ID", rsrc, fixed = TRUE),
      "the runner asks it of the cohort attempt the LOT run was built from")
   ok(identical(cfg0()$cohort_index_exclusions, "panobinostat,elotuzumab"),
-     "and the shipped default is the protocol's two agents")
+     "and the bundled default is the protocol's two agents")
 }
 
 cat("\nstandalone\n")
@@ -2585,7 +2585,7 @@ cat("\nstandalone\n")
      paste0("no absolute path is hard-coded (offenders: ",
             paste(basename(hard), collapse = ", "), ")"))
   # A directory the package does not own. The point is that no code path names
-  # one at all: what ships alongside is reached relatively, and anything else is
+  # one at all: what sits alongside is reached relatively, and anything else is
   # a working directory that does not travel with the package.
   own_dirs <- c("R", "modules", "tests", "codelists", "fixtures")
   # Two shapes: a path with a second segment that carries an extension or a
@@ -2595,10 +2595,10 @@ cat("\nstandalone\n")
     sub("/.*$", "", sub('^"', "", unlist(regmatches(x, gregexpr(
       paste0('"[A-Za-z][A-Za-z0-9_ -]*/[A-Za-z0-9_. -]*[/.]',
              '|"[A-Za-z][A-Za-z0-9_-]* [A-Za-z0-9_ -]*/'), x))))))
-  repo <- names(Filter(function(v) length(setdiff(v, own_dirs)) > 0, named))
-  ok(length(repo) == 0,
+  outside <- names(Filter(function(v) length(setdiff(v, own_dirs)) > 0, named))
+  ok(length(outside) == 0,
      paste0("no code path names a directory outside the package (offenders: ",
-            paste(basename(repo), collapse = ", "), ")"))
+            paste(basename(outside), collapse = ", "), ")"))
   ok(all(file.exists(file.path("R", "modules", MODULE_FILES))),
      "every module file the runner sources is inside the package")
   ok(setequal(MODULE_FILES, list.files("R/modules", pattern = "[.]R$")),
@@ -2606,7 +2606,7 @@ cat("\nstandalone\n")
   ok(FALSE || file.exists("R/load_inputs.R"),
      "load_inputs.R is a copy in the package, not a source() into a sibling")
 
-  # The code lists ship with the package, so it is complete on its own.
+  # The code lists come with the package, so it is complete on its own.
   ok(dir.exists("codelists"), "the package carries its own codelists/")
   cfgd <- cfg0()
   ok(!nzchar(cfgd$codelist_dir),
@@ -2618,17 +2618,17 @@ cat("\nstandalone\n")
      grepl("not a directory",
            errs(resolve_codelist_dir(cfg0(c(CODELIST_DIR = "elsewhere")), "."))),
      "a CODELIST_DIR that does not exist stops the run")
-  shipped <- list.files("codelists", pattern = "[.]csv$")
-  ok(setequal(shipped, names(CODELIST_SPEC)),
-     paste0("every file the spec names ships as a template (missing: ",
-            paste(setdiff(names(CODELIST_SPEC), shipped), collapse = ", "), ")"))
+  bundled <- list.files("codelists", pattern = "[.]csv$")
+  ok(setequal(bundled, names(CODELIST_SPEC)),
+     paste0("every file the spec names is present as a template (missing: ",
+            paste(setdiff(names(CODELIST_SPEC), bundled), collapse = ", "), ")"))
 
   # And every one of them refuses to load, because none is filled in.
   cfgl <- cfgd; cfgl$codelist_dir <- resolve_codelist_dir(cfgd, ".")
   loads <- Filter(function(f) is.na(errs(load_codelist(f, cfgl))),
                   names(CODELIST_SPEC))
   ok(length(loads) == 0,
-     paste0("no shipped template loads clean - each is a to-do list the code ",
+     paste0("no bundled template loads clean - each is a to-do list the code ",
             "checks (loaded anyway: ", paste(loads, collapse = ", "), ")"))
 
   # The guard that let a whole blank list through.
@@ -2649,7 +2649,7 @@ cat("\nstandalone\n")
      "and a blank one is refused on the SAME column, not skipped")
   unlink(tmp, recursive = TRUE)
 
-  # Protocol structure that ships filled in, because it is the protocol's and
+  # Protocol structure that comes filled in, because it is the protocol's and
   # not a code list.
   se <- read.csv("codelists/safety_events.csv", stringsAsFactors = FALSE)
   ok(nrow(se) == 23, "safety_events.csv carries all 23 Table 3 rows")
@@ -3263,7 +3263,7 @@ step_sql <- function(r, tag) {
     env$prepare_table <- function(con, name, schema_sql, cohort_key) invisible(name)
     f <- mod_cohorts; environment(f) <- env
     f(NULL, cfg0(), COHORTS[["1L"]])
-  }))), "...while the shipped list, every `here` criterion with a predicate, does not")
+  }))), "...while the bundled list, every `here` criterion with a predicate, does not")
 
   # The same script, executed: the custom criterion re-derives what I4 did,
   # so every golden number - including the two that hold the funnel's last
@@ -3502,7 +3502,7 @@ cat("\n-- a predicate with an OR in it --\n")
      "the OR reaches both, parenthesised in both")
   # Executed: on the four-cohort fixture, every cohort's membership is its
   # funnel's last step and no step counts more than the one above it. The
-  # shipped goldens do not describe this registry, so the run carries its
+  # bundled goldens do not describe this registry, so the run carries its
   # own.
   gold <- tempfile(fileext = ".py")
   eq <- function(ck) sprintf(

@@ -74,7 +74,7 @@ Nothing is written, and the command exits 1, when:
   previous build's or part of this one;
 - the run recorded no `MODULES` or no `COHORTS`, so nothing under the prefix can
   be shown to be its own;
-- the shipped contract is not the one the run was driven by ("The study
+- the bundled contract is not the one the run was driven by ("The study
   contract");
 - `TFLS_STUDY_CODE_MD5` is set and the run's `STUDY_CODE_MD5` differs or is
   missing;
@@ -91,7 +91,7 @@ nothing to compare; the fill warns and goes on.
 which of them the release module publishes a suppressed copy of, and which are
 written only when a switch asks for them. It is **generated** by
 `write_study_contract()` in `variables/R/contract.R` from the `MODULES`,
-`SUPPRESSION_SPEC` and `OPTIONAL_FEATURES` that drive the run, and shipped here
+`SUPPRESSION_SPEC` and `OPTIONAL_FEATURES` that drive the run, and bundled here
 because a snapshot is filled where the study package is not installed.
 Regenerate it whenever the study registry gains a table, from the folder
 holding `TFLS/` and `variables/`:
@@ -106,7 +106,7 @@ write_study_contract("TFLS/contract/study223926_contract.csv")
 study package sits beside this folder.
 
 A run records the md5 of the contract it was driven by in
-`S_RUN_METADATA.STUDY_CONTRACT_MD5`. Before anything is read the shipped copy
+`S_RUN_METADATA.STUDY_CONTRACT_MD5`. Before anything is read the bundled copy
 is hashed the same way - over its lines, so other line endings are the same
 contract - and a difference stops the fill. No setting waives it: a contract
 from another version of the package can name a table as unsuppressed that this

@@ -1,7 +1,7 @@
 # Counts at each filter step for the attrition card. Steps after
 # ELIG_COH_FINAL + LOT1 are CUMULATIVE - each row applies all previous
 # NDMM filters plus the new one, so the table reads top-to-bottom as
-# the funnel a clinical reviewer would expect.
+# the funnel a clinician would expect.
 ndmm_counts <- function(con, mm_qualifying, base_cohort) {
   n_of <- function(sql) db_q(con, sql)$n
   # The population is everyone with a qualifying MM diagnosis, then those old

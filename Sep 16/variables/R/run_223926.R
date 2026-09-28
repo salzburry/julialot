@@ -225,7 +225,7 @@ RUN_METADATA_COLS <- c(
   RUN_ID = "string", STATE = "string", UPDATED_AT = "timestamp",
   COHORTS = "string", MODULES = "string",
   # WHICH code and WHICH contract produced this row's numbers. A sibling fills
-  # its shells from a SHIPPED COPY of the contract, and a copy can be stale;
+  # its shells from a BUNDLED COPY of the contract, and a copy can be stale;
   # recorded here, a filled table can be checked against the run rather than
   # against whatever the copy says today.
   STUDY_CODE_MD5 = "string", STUDY_CONTRACT_MD5 = "string",
@@ -236,7 +236,7 @@ RUN_METADATA_COLS <- c(
   LOT_CODE_MD5 = "string",
   # The floor the LOT run was accepted against. A study may move it, so the
   # row has to say which one applied or a reader cannot tell a run that cleared
-  # the shipped floor from one that cleared a lowered one.
+  # the bundled floor from one that cleared a lowered one.
   LOT_RULES_EPOCH = "string",
   COHORT_ATTEMPT_ID = "string", COHORT_ATTEMPT_STAMP = "string",
   STUDY_START = "string", STUDY_END = "string",

@@ -221,7 +221,7 @@ check_cohort_attempt <- function(con, cfg, inputs) {
 # Domino to run - and LOT_CODE_MD5 is where a study team pins the one it
 # approved.
 #
-# Blank is the shipped default and checks nothing, so this adds no refusal to
+# Blank is the bundled default and checks nothing, so this adds no refusal to
 # a run that does not ask for one; it only lets a run that wants the stronger
 # statement make it.
 check_lot_code <- function(cfg, md5, run_id) {

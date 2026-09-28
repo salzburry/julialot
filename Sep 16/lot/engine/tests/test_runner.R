@@ -940,7 +940,7 @@ r <- gsub("ac.TX_DT > lb.LOT1_BASE_RUNOUT_DT", "TX > RUNOUT", r, fixed = TRUE)
 r <- gsub("ac.TX_DT <= lb.OBS_END_DT", "TX <= OBS_END", r, fixed = TRUE)
 r <- gsub(" AND ", " & ", r, fixed = TRUE)
 ok(!grepl("ac\\.|lb\\.|SELECT|WHERE", r),
-   "the post-run-out SCT predicate translates whole, so the case below tests the shipped text")
+   "the post-run-out SCT predicate translates whole, so the case below tests the bundled text")
 confirms <- function(TX, TYPE = "CART", RUNOUT = 39, OBS_END = 100)
   isTRUE(eval(parse(text = r)))
 
@@ -1802,8 +1802,8 @@ cat("\n-- config.csv and CONTRACT say the same thing --\n")
 # drift from both without anything saying so.
 rows <- read.csv(file.path(ROOT, "config.csv"), stringsAsFactors = FALSE,
                  comment.char = "#")
-shipped <- setNames(trimws(as.character(rows$value)), trimws(rows$name))
-cnames <- names(shipped)[nzchar(names(shipped)) & !startsWith(names(shipped), "#")]
+bundled <- setNames(trimws(as.character(rows$value)), trimws(rows$name))
+cnames <- names(bundled)[nzchar(names(bundled)) & !startsWith(names(bundled), "#")]
 # The environment wins over the file, so anything already set would mask it.
 # Cleared for the load and put back afterwards, whatever this shell had.
 was <- Sys.getenv(cnames, unset = NA_character_, names = TRUE)
@@ -1892,7 +1892,7 @@ ok(length(pinned) > 0 &&
                 logical(1))),
    paste0("all ", length(pinned), " settings the file carries match CONTRACT"))
 # The caller passes the cohort, so config.csv must not pin one.
-ok(!any(c("INPUT_COHORT_TABLE", "OBJECT_PREFIX") %in% names(shipped)),
+ok(!any(c("INPUT_COHORT_TABLE", "OBJECT_PREFIX") %in% names(bundled)),
    "config.csv does not name a cohort")
 
 cat("\n-- the CDM vintage every read hits --\n")
@@ -2163,7 +2163,7 @@ cat("\n-- face validity: does the output look like myeloma --\n")
 # with transplants in late lines or a median line lasting three days, and
 # nothing else here would notice.
 ok(exists("FACE_VALIDITY") && length(FACE_VALIDITY) >= 5,
-   paste0("face-validity checks ship (", length(FACE_VALIDITY), ")"))
+   paste0("face-validity checks are defined (", length(FACE_VALIDITY), ")"))
 fvn <- vapply(FACE_VALIDITY, `[[`, character(1), "name")
 ok(!anyDuplicated(fvn), "each has its own name, so a row identifies a check")
 ok(all(vapply(FACE_VALIDITY, function(f)
@@ -2174,10 +2174,10 @@ ok(all(vapply(FACE_VALIDITY, function(f) f$lo <= f$hi, logical(1))),
 ok(all(vapply(FACE_VALIDITY, function(f) grepl("{t}", f$sql, fixed = TRUE), logical(1))),
    "every check reads the final table through the placeholder, not a fixed name")
 # The study population, not LOT_LONG. A criterion that truncates a patient
-# changes who is in the cohort, so plausibility has to be asked of what ships.
+# changes who is in the cohort, so plausibility has to be asked of what is published.
 fvb <- bodyf("run_face_validity")
 ok(any(grepl('lot_out("LOT_LONG_FINAL")', fvb, fixed = TRUE)),
-   "asked of LOT_LONG_FINAL - the population that ships, not the pre-criteria one")
+   "asked of LOT_LONG_FINAL - the population that is published, not the pre-criteria one")
 # Reported, not fatal. An unusual cohort can legitimately fail one, and
 # stopping a build on a plausibility judgement would be wrong.
 ok(any(grepl("cfg$face_validity_fatal", fvb, fixed = TRUE)),
@@ -2236,7 +2236,7 @@ ok(any(grepl('kind = "progression", step = paste0("Reached LOT", k)', src, fixed
 ok(any(grepl("seq_len(as.integer(cfg$max_lot))", src, fixed = TRUE)),
    "...every line to max_lot, so a line nobody reached is a zero row and not a missing one")
 ok(any(grepl("FROM lot_long_final GROUP BY LOT_NUM", src, fixed = TRUE)),
-   "...counted on the population that ships")
+   "...counted on the population that is published")
 # The share of the row above is the number being asked for: for a criterion its
 # own cost, for a progression row the proportion going on to the next line.
 ok(any(grepl("pct_of(s$n$patients, prev)", src, fixed = TRUE)),
@@ -2710,7 +2710,7 @@ retry_env$run_step(NULL, "bare_insert", INS)
 ok(length(d$rows()) == 2 && sum(grepl("^\\s*INSERT", d$calls())) == 2,
    "an INSERT retried on its own does append the same line twice")
 
-# The fix: the same lost answer, with the DELETE and the INSERT as one unit.
+# What holds: the same lost answer, with the DELETE and the INSERT as one unit.
 d <- driver("INSERT")
 assign("db_exec_once", d$exec, envir = retry_env)
 retry_env$run_step(NULL, "append_long", c(DEL, INS), retry_as_unit = TRUE)

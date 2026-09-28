@@ -160,16 +160,14 @@ check_settings <- function() {
     bad <- c(bad, paste0("NDMM_WAIVERS names no such check: ",
                          paste(unknown, collapse = ", "),
                          " (waivable: ", paste(WAIVABLE_CHECKS, collapse = ", "), ")"))
-  # NDMM_LOT1_FROM was the SQL's own name for LOT1_FROM, and the two had to be
-  # set together. ndmm_constants.R now reads LOT1_FROM like everything else,
-  # so this variable does nothing - and a run that still exports it, as the
-  # old instructions said to, would silently get the config's value instead of
-  # the one it asked for. Refused rather than ignored.
+  # NDMM_LOT1_FROM is not a setting: ndmm_constants.R reads LOT1_FROM like
+  # everything else. A run that exports it would silently get the config's
+  # value instead of the one it meant, so it is refused rather than ignored.
   old_l1 <- trimws(Sys.getenv("NDMM_LOT1_FROM", unset = ""))
   if (nzchar(old_l1))
-    bad <- c(bad, paste0("NDMM_LOT1_FROM='", old_l1, "' is no longer read - ",
+    bad <- c(bad, paste0("NDMM_LOT1_FROM='", old_l1, "' is not a setting - ",
                          "the 1L index floor is LOT1_FROM, in config.csv or ",
-                         "the environment, and it now reaches the SQL. Unset ",
+                         "the environment, and it reaches the SQL. Unset ",
                          "NDMM_LOT1_FROM and set LOT1_FROM."))
   for (v in c("STUDY_END", "LOT1_FROM", "STUDY_START")) {
     x <- trimws(Sys.getenv(v, unset = ""))
@@ -236,7 +234,7 @@ pin_prefix <- function(cfg, prefix) {
 # refused. NDMM_CONTRACT_OVERRIDE is the one way past, and it exists so that
 # moving the study window is an edit to config.csv and one acknowledgement -
 # not an edit to this file. Before it, CONTRACT was the only place a date
-# could be changed, so a sensitivity run meant editing shipped R, and the
+# could be changed, so a sensitivity run meant editing bundled R, and the
 # cohort's own definition and the run's settings drifted by hand.
 #
 # A deviating run cannot pass for the study's: the deviations go into
@@ -612,7 +610,7 @@ check_ndc_shape <- function(con, cfg) {
   invisible(TRUE)
 }
 
-# The md5 of every R file this package ships, so two runs can be told apart by
+# The md5 of every R file in this package, so two runs can be told apart by
 # the code that made them. Radix sort, not the default: character collation is
 # locale-dependent and a hash meaning "the same code" must not be.
 code_fingerprint <- function(here) {
@@ -1003,7 +1001,7 @@ check_icd_flag <- function(con, cfg) {
     d <- tryCatch(db_q(con, sql), error = function(e) NULL)
     if (is.null(d) || !nrow(d)) return("")
     # Kept for the metadata row as well as the log. The magnitude is the whole
-    # point of recording this: NDMM_ICD_FLAG_MAX_ROWS ships empty, so unless
+    # point of recording this: NDMM_ICD_FLAG_MAX_ROWS is empty by default, so unless
     # somebody sets it the row read later is all there is to tell sixteen
     # claims from a data-quality failure.
     seen_codes <<- rbind(seen_codes, data.frame(

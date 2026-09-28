@@ -1278,7 +1278,7 @@ source(file.path(here, "jobs", "export_lib.R"))
      "and a lower-case column is documentation, not a setting to export")
 
   # --- what every scenario reads is set before any of them is built ---
-  # The shipped config.csv leaves the cohort table and both read prefixes
+  # The bundled config.csv leaves the cohort table and both read prefixes
   # blank, and a grid row names neither, so a Job given only the password and
   # the schema built nothing: each child stopped in turn, or read its inputs
   # under its own prefix.
@@ -1289,7 +1289,7 @@ source(file.path(here, "jobs", "export_lib.R"))
   g0 <- with_env(unset_inputs, shared_inputs_missing(two, c("sc_a_", "sc_b_"), shipped_csv))
   ok(identical(g0, c("INPUT_COHORT_TABLE (every scenario)", "LOT_PREFIX (sc_a_)",
                      "COHORT_PREFIX (every scenario)")),
-     "with the shipped config.csv and nothing from the Job, the three shared inputs are named, row by row")
+     "with the bundled config.csv and nothing from the Job, the three shared inputs are named, row by row")
   g1 <- with_env(c(INPUT_COHORT_TABLE = "ndmm_NDMM_COHORT", LOT_PREFIX = "ndmm_",
                    COHORT_PREFIX = "ndmm_"),
                  shared_inputs_missing(two, c("sc_a_", "sc_b_"), shipped_csv))
@@ -1307,7 +1307,7 @@ source(file.path(here, "jobs", "export_lib.R"))
   ok(at_check > 0 && at_build > 0 && at_check < at_build,
      "the Job asks before the first scenario is built, not after each one fails")
 
-  # --- the shipped grid, row by row, through the package's own config ---
+  # --- the bundled grid, row by row, through the package's own config ---
   # A grid value the package would refuse is found here rather than on the
   # cluster: ED_DEFINITION takes a comma list of revenue, pos and cpt, and a
   # word such as rev_or_pos is never read.
@@ -1327,7 +1327,7 @@ source(file.path(here, "jobs", "export_lib.R"))
     if (!is.na(msg)) refused <- c(refused, paste0(grid$prefix[i], ": ", msg))
   }
   ok(!length(refused),
-     paste0("every row of the shipped grid is a setting the package accepts",
+     paste0("every row of the bundled grid is a setting the package accepts",
             if (length(refused)) paste0(" [", paste(refused, collapse = " | "), "]") else ""))
   base_cfg <- grid_cfg(grid[1, ])
   ok(identical(base_cfg$ed_definition, c("revenue", "pos")),
@@ -1962,7 +1962,7 @@ ok(lot_run_bound(SRC, SCENARIOS[[1]]),
          "the synthetic NESTED flags are the registry's own nested_in, so SEC2L is not marked drawn from a cohort it stands apart from")
       want_crit <- vapply(COHORT_KEYS, function(k) {
         cr <- pkg$COHORTS[[k]]$criteria
-        # resolve_cohorts() drops X2 from SEC2L under the shipped default.
+        # resolve_cohorts() drops X2 from SEC2L under the bundled default.
         if (identical(k, "SEC2L")) cr <- setdiff(cr, "X2_other_cancer")
         paste(cr, collapse = "; ")
       }, character(1))
@@ -2835,7 +2835,7 @@ cat("\nthe snapshot is rebuilt while a shell table is being filled\n")
     ok(grepl('table class="grid"', shell_panel_html(ready, f), fixed = TRUE),
        "...so a filled table drawn from it would put the previous run's rows on the page")
     # What keeps them off it: the same check, asked again between the fill and
-    # anything being drawn. A text check, because the placement is the fix -
+    # anything being drawn. A text check, because the placement is what matters -
     # the answer itself is driven above.
     app <- paste(readLines("app.R", warn = FALSE), collapse = "\n")
     after <- substring(app, regexpr("shell_fill(ready, tid", app, fixed = TRUE))
