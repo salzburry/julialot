@@ -24,11 +24,22 @@
 })
 LOT_ROOT <- normalizePath(file.path(.script_dir, "..", "..", "lot", "engine"), mustWork = TRUE)
 
+# Base R has this only from 4.4, and nothing sourced below defines it.
+`%||%` <- function(a, b) if (is.null(a)) b else a
+
 source(file.path(LOT_ROOT, "R", "load_inputs.R"))
 load_pipeline_inputs(LOT_ROOT, "config.csv")
 for (f in c("config_lot.R", "db_utils_lot.R"))
   source(file.path(LOT_ROOT, "R", f))
 source(file.path(.script_dir, "R", "cells.R"))
+
+# The previous reports are removed before this read starts, not when it
+# finishes writing. Every check below can stop the read, and a read that stops
+# should leave no report rather than an older one that looks current - under
+# either the current names or the ones this reader wrote before.
+out_dir <- melp_out_dir(.script_dir)
+dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
+melp_clear_summary(out_dir)
 
 cfg <- get("cfg_defaults", envir = globalenv())
 schema <- Sys.getenv("PROJECT_WORK_SCHEMA",
@@ -39,18 +50,6 @@ cfg$work_schema <- schema
 set_lot_config(cfg)
 
 MELP <- toupper(trimws(cfg$melp_med_abbr %||% "MELP"))
-out_dir <- melp_out_dir(.script_dir)
-dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
-
-# The previous answers are removed before this read starts, not when it
-# finishes writing. Any check below can stop the read, and an interrupted read
-# should leave no answer rather than an older one that looks current.
-OUT_CSVS <- c("melp_q1_line_duration.csv",
-              "melp_q1_paired_line_change.csv",
-              "melp_q1_line_count_change.csv",
-              "melp_q2_regimens_by_line.csv",
-              "melp_q3_sct_in_melp_lot.csv")
-for (f in file.path(out_dir, OUT_CSVS)) if (file.exists(f)) unlink(f)
 
 stop_if_blank(cfg$pwd, "DATABRICKS_PWD environment variable is not set.")
 con <- DBI::dbConnect(odbc::odbc(), dsn = cfg$dsn, pwd = cfg$pwd, timeout = 120)
@@ -274,6 +273,8 @@ q3 <- per_cell(function(c_i) paste0("
 # A query with no rows still writes, so an earlier run's file cannot sit there
 # looking like this one's answer.
 write_out <- function(d, name, title) {
+  # Only a name the cleanup knows, so no report can outlive the next read.
+  stopifnot(name %in% MELP_SUMMARY_CSVS)
   d <- melp_stamp(d, inputs, status)
   cat("\n", title, "\n", sep = "")
   f <- file.path(out_dir, name)

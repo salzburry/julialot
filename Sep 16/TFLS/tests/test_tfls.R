@@ -1179,6 +1179,18 @@ ok(all(c("REASON", "REASON_KIND", "SUPPRESSED", "FILLED") %in% names(render_csv(
    "...and carries why each cell is what it is")
 
 cat("\n-- the generated contract, against the package that emits it --\n")
+# The documented way to regenerate it writes to the one name the reader opens.
+# A glob over the folder names nothing when the file is missing, several files
+# when a backup sits beside it, and the backup alone when it is all that is left.
+local({
+  rd <- paste(readLines(file.path(ROOT, "README.md"), warn = FALSE), collapse = "\n")
+  cmd <- regmatches(rd, gregexpr('write_study_contract\\([^)]+\\)', rd))[[1]]
+  ok(length(cmd) == 1L &&
+       identical(cmd, sprintf('write_study_contract("%s")', file.path("TFLS", TFLS_CONTRACT_FILE))),
+     paste0("the README regenerates the contract to TFLS/", TFLS_CONTRACT_FILE,
+            ", the file the reader opens, named outright (",
+            paste(cmd, collapse = "; "), ")"))
+})
 # R/scope.R does not restate the package's registry; it reads the contract
 # the package emits. The shipped COPY can still fall behind the registry, and
 # this is what stops that: regenerate from the package and compare.
