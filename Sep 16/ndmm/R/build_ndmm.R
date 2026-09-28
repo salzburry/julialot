@@ -280,11 +280,11 @@ raw_tables <- function(cfg) {
     cfg$tbl_confinement, cfg$tbl_member_enroll, cfg$tbl_member_elig, cfg$tbl_dod)
 }
 
-# Every input table, before any work. Skipping a filter whose
-# inputs it could not read and carried on, which produces a cohort that is
-# smaller than it should be with nothing in the output saying so.
-# This build reads raw CDM and its own code lists and nothing built by another
-# package, which is what lets it be handed over on its own.
+# Every input table, before any work. A filter whose inputs could not be read
+# would otherwise be skipped, producing a cohort smaller than it should be with
+# nothing in the output saying so. This build reads raw CDM and its own code
+# lists and nothing built by another package, which is what lets it run on its
+# own.
 check_upstream <- function(con, cfg) {
   missing <- character(0)
   raw <- raw_tables(cfg)

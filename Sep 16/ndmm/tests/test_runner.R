@@ -1009,7 +1009,7 @@ ok(!grepl("2016-01-01", patids_sql, fixed = TRUE),
 ok(grepl("b.bel_dt < l1.LOT1_START_DT", patids_sql, fixed = TRUE),
    "...it only asks which side of the index the claim falls")
 
-cat("\n-- the handover list is bounded by the patient's own follow-up --\n")
+cat("\n-- the list passed to lot is bounded by the patient's own follow-up --\n")
 # The study period is not the window lot reads. lot bounds every claim by the
 # patient's OBS_END_DT, so a belantamab claim dated after they died is inside
 # the study period, would have been in this table, and is invisible to lot -
