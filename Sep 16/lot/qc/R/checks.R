@@ -771,7 +771,7 @@ LOT_QC_CHECKS <- list(
                     "after a confirmed discontinuation is not exempt. The ",
                     "exemption - the lag of MAP_DISCON_FLG over that drug's ",
                     "own episodes - applies only to a comparison build, where ",
-                    "apply_own_return_fold is FALSE and the release is back: ",
+                    "apply_own_return_fold is FALSE and the release applies: ",
                     "the settings decide, so the check reads the same switch ",
                     "the engine does rather than tolerating both. ",
                     "MELPHALAN IS THE ONE EXCEPTION, and it is the rule's own. ",

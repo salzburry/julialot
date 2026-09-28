@@ -311,8 +311,8 @@ ok(has(SQL$C2, "array_contains(split(coalesce(f.LOT_BASE_MEDS, ''), ' ')"),
    "C2 still catches an added medication that is already in the regimen")
 ok(!has(SQL$C2, "coalesce(r.PREV_DISCON, 0) = 0"),
    "...with no exemption, because the pinned rule releases no such drug")
-# The exemption comes back for a comparison build, where the release is back
-# too. The check reads the run's own setting rather than tolerating both.
+# The exemption applies to a comparison build, where the release applies too.
+# The check reads the run's own setting rather than tolerating both.
 ok(has(c_i_sql_off <- LOT_QC_CHECKS[[which(vapply(LOT_QC_CHECKS,
          function(c_i) identical(c_i$id, "C2"), logical(1)))]]$sql(
            TBL, modifyList(P, list(own_return_fold = FALSE))),
