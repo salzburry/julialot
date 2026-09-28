@@ -291,13 +291,15 @@ export_one <- function(prefix, env) {
     message("  no LOT run recorded, so no LOT tables exported")
     return(publish(stage, d, n, prefix, ""))
   }
+  # Both LOT paths come from one name, checked before either is built.
+  lot_paths <- lot_snapshot_paths(out_dir, lot_id, lot_version)
   # The prefix has to be owned by THIS run - this build of it - before a
   # table is copied under its name, and still owned by it afterwards; a
   # rebuild landing between the two reads would otherwise file the new lines
   # under the old id.
   owner <- function() lot_prefix_owner_ok(con, lot_tbl("LOT_BUILD_STATUS"),
                                           lot_id, lot_version)
-  ld <- file.path(out_dir, "lot", lot_dir_name(lot_id, lot_version))
+  ld <- lot_paths$dest
   cached <- dir.exists(ld) && length(list.files(ld, pattern = "[.]csv$")) > 0
   reuse <- function() {
     message("  LOT run ", lot_id, if (nzchar(lot_version))
@@ -318,8 +320,7 @@ export_one <- function(prefix, env) {
          "or is not complete), so its tables cannot be filed under that ",
          "run's name", call. = FALSE)
   if (cached) return(reuse())
-  lstage <- file.path(out_dir, "lot",
-                      paste0(".", lot_dir_name(lot_id, lot_version), ".staging"))
+  lstage <- lot_paths$stage
   unlink(lstage, recursive = TRUE)
   dir.create(lstage, recursive = TRUE, showWarnings = FALSE)
   on.exit(unlink(lstage, recursive = TRUE), add = TRUE)

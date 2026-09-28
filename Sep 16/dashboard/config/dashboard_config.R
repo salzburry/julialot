@@ -42,10 +42,14 @@ DASH_STUDY_MIN_N <- 25L
   raw <- .env_chr(k, NA_character_)
   if (is.na(raw)) return(DASH_STUDY_MIN_N)
   v <- suppressWarnings(as.numeric(raw))
-  if (is.na(v) || v != round(v) || v < DASH_STUDY_MIN_N)
-    stop("DASHBOARD ERROR: ", k, "='", raw, "' is not a whole number at or above ",
-         "the study's small-cell floor of ", DASH_STUDY_MIN_N, ". It can raise the ",
-         "floor, never lower it.", call. = FALSE)
+  # Checked before the conversion: Inf, 1e309 and anything past the largest
+  # integer would otherwise become NA there and fail later, in the slider.
+  if (is.na(v) || !is.finite(v) || v > .Machine$integer.max || v != round(v) ||
+      v < DASH_STUDY_MIN_N)
+    stop("DASHBOARD ERROR: ", k, "='", raw, "' is not a whole number from the ",
+         "study's small-cell floor of ", DASH_STUDY_MIN_N, " to ",
+         .Machine$integer.max, ". It can raise the floor, never lower it.",
+         call. = FALSE)
   as.integer(v)
 }
 .env_lgl <- function(k, d) {
