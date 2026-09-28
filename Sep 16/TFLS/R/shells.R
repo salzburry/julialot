@@ -2,7 +2,7 @@
 #
 # They are meant to be edited by hand, so every mistake the code could
 # otherwise carry into a published table stops the run here, naming the file
-# and the row. A shell asking for a statistic nothing implements is a defect in
+# and the row. A shell asking for a statistic nothing implements is an error in
 # the shell, not a blank cell in the output.
 #
 # Sourced first: the helpers below are used by every other file in R/.
@@ -63,7 +63,7 @@ selector_has <- function(values, x, kind) {
 #
 # Two conditions, because they mean different things to the runner: a shell
 # file that is not there yet is a shell set still being written, and a shell
-# file that is there and wrong is a defect to fix.
+# file that is there and wrong is an error to fix.
 
 shell_stop <- function(file, row, ...) {
   where <- if (length(row) != 1L || is.na(row)) "" else paste0(" row ", row)

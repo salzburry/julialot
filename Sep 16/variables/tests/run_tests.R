@@ -67,7 +67,7 @@ check_skip_wiring <- function(path = .suite_path) {
     return(skip_note(paste0("this suite's own source could not be located, ",
                             "so its skip wiring is unchecked")))
   # A path that names no file is different: the suite worked out where it lives
-  # and got it wrong, which is a defect in this file rather than a missing
+  # and got it wrong, which is an error in this file rather than a missing
   # capability. It returned quietly before, and two suites that resolved their
   # path AFTER a setwd() spent every run with this guard off - silently, and
   # under exactly the invocation the runbook documents.
@@ -1526,12 +1526,12 @@ cat("\nthe rules that hold the numbers up\n")
     # The engine's R, by its own code_fingerprint() - the same value it
     # records as CODE_MD5, so the two can be compared by eye.
     #
-    # A change that leaves the emitted statement chain byte-identical, 2L and
-    # 3L included, is re-pinned WITHOUT moving the date: no rule moved, so no
-    # line did, and moving the date would refuse runs for a change that alters
-    # nothing they built. Where the emitted SQL differs, the date moves too -
-    # that is what the date is for.
-    engine = "63967a029d1660fd237022e1ac336cb7",
+    # A change that leaves every rule as it was - the emitted statements, 2L
+    # and 3L included, identical apart from their comments - is re-pinned
+    # WITHOUT moving the date: no rule moved, so no line did, and moving the
+    # date would refuse runs for a change that alters nothing they built.
+    # Where a rule changes, the date moves too - that is what the date is for.
+    engine = "5548a3eb7f8fab44f903e029c619e601",
     # ...and its shipped settings, which code_fingerprint() does not read.
     # Most of what decides a line is pinned in the engine's own CONTRACT and
     # so is inside the R, but the study window is not, and a build reading a

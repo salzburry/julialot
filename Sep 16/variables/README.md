@@ -12,7 +12,6 @@ folder, where to start and how to run it.
 | GSK study | **223926** · asset GSK2857916, Belantamab Mafodotin (Blenrep) |
 | title | *Unmet Needs and Rates of Key Background Safety Events of Interest Relating to Treatment Use among Newly Treated and Relapsed/Refractory Patients with Multiple Myeloma* |
 | accountable | Epidemiology, Oncology |
-| effective | 26 August 2026 |
 | classification | Non-PASS · Tier 2 · secondary data collection · no safety objective |
 | data source | Optum Clinformatics Data Mart (CDM) |
 | classification marking | Critical and Sensitive Information (CSI) |
@@ -28,7 +27,7 @@ folder, where to start and how to run it.
 | Secondary 2L (RRMM) | **not nested** - all 2L initiators | 2L start, ≥ 01 Jan 2020 | same as 1L except the index, and prior malignancy is permitted |
 
 There is no 4L cohort - only a 4L start date and 4L regimen. Expected sizes from
-the protocol's own feasibility count (August 2026): **10,514** 1L, **5,179** 2L,
+the protocol's own feasibility count: **10,514** 1L, **5,179** 2L,
 **3,127** 3L, before study criteria are applied.
 
 The rules are quoted in `IE_CRITERIA.md`; which of them this package applies,

@@ -60,7 +60,7 @@ check_skip_wiring <- function(path = .suite_path) {
     return(skip_note(paste0("this suite's own source could not be located, ",
                             "so its skip wiring is unchecked")))
   # A path that names no file is different: the suite worked out where it lives
-  # and got it wrong, which is a defect in this file rather than a missing
+  # and got it wrong, which is an error in this file rather than a missing
   # capability. It returned quietly before, and two suites that resolved their
   # path AFTER a setwd() spent every run with this guard off - silently, and
   # under exactly the invocation the runbook documents.
@@ -143,12 +143,12 @@ ok(length(VIGNETTES) >= 15,
 df <- render_vignettes(P)
 ok(nrow(df) == length(VIGNETTES) && !anyNA(df$expected),
    "...and every one renders an expected outcome")
-# The idea named these cases specifically. A catalogue that quietly drops one
+# These cases are named specifically. A catalogue that quietly drops one
 # is a catalogue that answers a different question.
 for (want in c("tandem", "cart_bridge", "biosimilar", "maintenance",
                "overlapping_oral_refills", "map_gap", "allo_after_failed_auto"))
   ok(any(grepl(want, df$id, fixed = TRUE)),
-     paste0("...including the '", want, "' case that was asked for"))
+     paste0("...including the '", want, "' case the catalogue must hold"))
 
 cat("\n-- it moves when a setting moves, which is the point --\n")
 # Hardcoding "day 181" is what makes a catalogue rot. Every offset is derived,

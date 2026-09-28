@@ -132,10 +132,9 @@ transplant-eligible (TE).
 > patients with at least one event) and **baseline healthcare utilisation**
 > (all-cause inpatient hospitalisation, inpatient length of stay, ER visits) —
 > and the head of **Primary Objective 2**: its banner and the **on-treatment
-> incidence of safety events** row. Those rows follow the June 2026 version's
-> wording, its Table 3. The counting rules they rest on are restated in §7.8.1
-> (§5 below); the one thing §7.8.1 does not restate is the June functional form
-> of the baseline hospitalisation and ER-visit rows (0, 1, 2, 3, 4+). The
+> incidence of safety events** row. The build reads them from the counting
+> rules §7.8.1 states (§5 below), and reports the baseline hospitalisation and
+> ER-visit rows in the bands 0, 1, 2, 3, 4+. The
 > Primary Objective 2 rows that can be read are:
 >
 > | variable | definition | timing |

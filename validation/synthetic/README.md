@@ -28,7 +28,7 @@ the output, whichever folder the filesystem listed first would have won.
 seconds. Five more harnesses in this folder plant named patients and assert
 the lines they should produce — `run_melp_simple.py` (melphalan),
 `run_map_foldin.py` (MAP fold-in and the shipped QC over planted patients),
-`run_lot_scenarios.py`, `run_aug15_screen.py` and `run_boundary_sweep.py`.
+`run_lot_scenarios.py`, `run_map_split_screen.py` and `run_boundary_sweep.py`.
 CI runs all six. They are where every patient-level defect found in review
 came from, so run them around any engine change, not just the gate.
 

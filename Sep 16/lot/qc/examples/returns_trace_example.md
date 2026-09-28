@@ -1,6 +1,6 @@
 # Returning-drug trace - prefix `example_`
 
-Run `fixture`. What the rules adopted on 30 Aug 2026 (LOT_RULES.md 4.3 and 4.8) did with drugs that came back, on the patients they touched: raw MAP episodes beside the final lines, the returns marked.
+Run `fixture`. What the returning-drug rules (LOT_RULES.md 4.3 and 4.8) did with drugs that came back, on the patients they touched: raw MAP episodes beside the final lines, the returns marked.
 
 **This is a rendered example on the eight FIXTURE patients in tests/returns_fixture.R, not a run. R000001-R000008 are invented ids, and every date, drug and episode below is made up - nothing here is a patient.** Each patient is one shape the trace tells apart: a fold into 2L, an own return inside 1L, an own return inside 2L, a return across a transplant-opened 2L that opened 3L, a return from two lines back that opened 4L, a short melphalan course that opened a line (4.7), a drug that arrived while such a course still covered, and a drug carried over inside a window (counted, not traced). A real run lists every return in the warehouse's finished LOT run, samples the patients to trace, and does carry real identifiers - which is what the line below is about.
 
@@ -15,7 +15,7 @@ Three kinds of return are traced, and a fourth is counted:
 
 RETURN_LINE is the line a return belongs to for the 2L question: the line a fold or an own return sits in, and the line BEFORE the one a returning drug opened. So "drugs that came back in 2L" is RETURN_LINE = 2: folds into LOT 2, own returns inside LOT 2, and returns after LOT 2 that opened LOT 3; own returns inside LOT 1 are the ones that would have made a 2L before the rule. It is a filing convention, not a column of the run: a reader who wants the returns whose episode LIES in 2L reads LOT_NUM = 2 in the candidates CSV.
 
-Windows as the run recorded them: LOT1 60 days, later lines 30, CAR-T 45. A permissible substitute and the drug it replaces are one agent in the fold and line-opening tests (4.4); an own return is read under the drug's own name, because a substitute's restart was never released under the older reading either and so is not a return this rule changed. Each paragraph also says what the reading before 30 Aug 2026 would have made of the return - a local reading of these tables, stated for the FIRST return the rules decided in a patient; a later one says that it cannot be read locally. A build of the same cohort with APPLY_MAP_FOLDIN=FALSE and APPLY_OWN_RETURN_FOLD=FALSE, differenced against this one, is what settles an alternative history.
+Windows as the run recorded them: LOT1 60 days, later lines 30, CAR-T 45. A permissible substitute and the drug it replaces are one agent in the fold and line-opening tests (4.4); an own return is read under the drug's own name, because a substitute's restart was never released under the reading without them either and so is not a return this rule changed. Each paragraph also says what the reading without 4.3 and 4.8 would have made of the return - a local reading of these tables, stated for the FIRST return the rules decided in a patient; a later one says that it cannot be read locally. A build of the same cohort with APPLY_MAP_FOLDIN=FALSE and APPLY_OWN_RETURN_FOLD=FALSE, differenced against this one, is what settles an alternative history.
 
 Traced: kinds fold, own_return, opens_line, every return line. 7 patient(s) carry a return in scope. 7 traced (a round-robin sample over kind, line and drug).
 
@@ -69,7 +69,7 @@ Episodes (MAP_STACKED) and transplant events, in date order:
 
 ## Patient R000002
 
-**Came back to its own line after a break (4.3) - LEN, LOT 1.** LEN is in LOT 1's own regimen (LEN): it was dosed inside the line's 60-day induction window. Its episode of 2020-01-01 to 2020-04-30 was followed by a break of 214 days (MAP_DISCON_FLG = 1: at least 90 days with no supply of LEN itself), and LEN came back on 2020-11-30, 334 days after LOT 1 opened and outside the window (window ended 2020-02-29). Under 4.3 a drug of the line's own regimen never starts a line, so the return stayed in LOT 1, which runs on over the break: LOT 1 is 2020-01-01 to 2021-03-31 (DISCONTINUATION). Before 30 Aug 2026 the break released the drug, and this return would have opened a new line on 2020-11-30. LOT 1's regimen (LEN) had run out on 2020-04-30, before the return, so the return would have confirmed that run-out (5.3): LOT 1 would have ended DISCONTINUATION on 2020-04-30 and the next line would have started on 2020-11-30 with LEN.
+**Came back to its own line after a break (4.3) - LEN, LOT 1.** LEN is in LOT 1's own regimen (LEN): it was dosed inside the line's 60-day induction window. Its episode of 2020-01-01 to 2020-04-30 was followed by a break of 214 days (MAP_DISCON_FLG = 1: at least 90 days with no supply of LEN itself), and LEN came back on 2020-11-30, 334 days after LOT 1 opened and outside the window (window ended 2020-02-29). Under 4.3 a drug of the line's own regimen never starts a line, so the return stayed in LOT 1, which runs on over the break: LOT 1 is 2020-01-01 to 2021-03-31 (DISCONTINUATION). Without 4.3 and 4.8 the break released the drug, and this return would have opened a new line on 2020-11-30. LOT 1's regimen (LEN) had run out on 2020-04-30, before the return, so the return would have confirmed that run-out (5.3): LOT 1 would have ended DISCONTINUATION on 2020-04-30 and the next line would have started on 2020-11-30 with LEN.
 
 Lines (LOT_LONG_FINAL):
 
@@ -88,7 +88,7 @@ Episodes (MAP_STACKED) and transplant events, in date order:
 
 ## Patient R000003
 
-**Came back to its own line after a break (4.3) - POM, LOT 2.** POM is in LOT 2's own regimen (POM): it was dosed inside the line's 30-day induction window. Its episode of 2020-09-01 to 2020-12-15 was followed by a break of 137 days (MAP_DISCON_FLG = 1: at least 90 days with no supply of POM itself), and POM came back on 2021-05-01, 242 days after LOT 2 opened and outside the window (window ended 2020-09-30). Under 4.3 a drug of the line's own regimen never starts a line, so the return stayed in LOT 2, which runs on over the break: LOT 2 is 2020-09-01 to 2021-08-31 (STUDY_END). Before 30 Aug 2026 the break released the drug, and this return would have opened a new line on 2021-05-01. LOT 2's regimen (POM) had run out on 2020-12-15, before the return, so the return would have confirmed that run-out (5.3): LOT 2 would have ended DISCONTINUATION on 2020-12-15 and the next line would have started on 2021-05-01 with POM.
+**Came back to its own line after a break (4.3) - POM, LOT 2.** POM is in LOT 2's own regimen (POM): it was dosed inside the line's 30-day induction window. Its episode of 2020-09-01 to 2020-12-15 was followed by a break of 137 days (MAP_DISCON_FLG = 1: at least 90 days with no supply of POM itself), and POM came back on 2021-05-01, 242 days after LOT 2 opened and outside the window (window ended 2020-09-30). Under 4.3 a drug of the line's own regimen never starts a line, so the return stayed in LOT 2, which runs on over the break: LOT 2 is 2020-09-01 to 2021-08-31 (STUDY_END). Without 4.3 and 4.8 the break released the drug, and this return would have opened a new line on 2021-05-01. LOT 2's regimen (POM) had run out on 2020-12-15, before the return, so the return would have confirmed that run-out (5.3): LOT 2 would have ended DISCONTINUATION on 2020-12-15 and the next line would have started on 2021-05-01 with POM.
 
 Lines (LOT_LONG_FINAL):
 
@@ -110,7 +110,7 @@ Episodes (MAP_STACKED) and transplant events, in date order:
 
 ## Patient R000007
 
-**Came back and opened a line (outside 4.8) - MELP, LOT 2.** MELP was in LOT 1's regimen (LEN MELP) and came back on 2020-12-01 as a short course confirmed by DARA. 4.7 makes such a course a line of its own from its first day, and melphalan is the one agent 4.3 exempts from 'a drug of the previous regimen never starts a line'. It was an added medication: LOT 1 ended MED_ADD on 2020-11-30, and MELP opened LOT 2 (DARA MELP). The 30 Aug 2026 rules changed nothing here: this is 4.7's reading, and it held before them too.
+**Came back and opened a line (outside 4.8) - MELP, LOT 2.** MELP was in LOT 1's regimen (LEN MELP) and came back on 2020-12-01 as a short course confirmed by DARA. 4.7 makes such a course a line of its own from its first day, and melphalan is the one agent 4.3 exempts from 'a drug of the previous regimen never starts a line'. It was an added medication: LOT 1 ended MED_ADD on 2020-11-30, and MELP opened LOT 2 (DARA MELP). 4.3 and 4.8 change nothing here: this is 4.7's reading, and it holds without them too.
 
 Lines (LOT_LONG_FINAL):
 
@@ -130,7 +130,7 @@ Episodes (MAP_STACKED) and transplant events, in date order:
 
 ## Patient R000004
 
-**Came back and opened a line (outside 4.8) - LEN, LOT 3.** LEN was last in LOT 1's regimen (BORT LEN). Its previous episode ran 2020-01-01 to 2020-06-30, 154 days before. LOT 2 was opened by a transplant or CAR-T (SCT_AUTO) and carried no drug. 4.8 refuses a fold across a procedure that opened a line, so LEN was no returning regimen drug when it came back on 2020-12-01. It was an added medication: LOT 2 ended MED_ADD on 2020-11-30, and LEN opened LOT 3 (LEN). The 30 Aug 2026 rules changed nothing here: this return opened a line under the earlier reading too.
+**Came back and opened a line (outside 4.8) - LEN, LOT 3.** LEN was last in LOT 1's regimen (BORT LEN). Its previous episode ran 2020-01-01 to 2020-06-30, 154 days before. LOT 2 was opened by a transplant or CAR-T (SCT_AUTO) and carried no drug. 4.8 refuses a fold across a procedure that opened a line, so LEN was no returning regimen drug when it came back on 2020-12-01. It was an added medication: LOT 2 ended MED_ADD on 2020-11-30, and LEN opened LOT 3 (LEN). 4.3 and 4.8 change nothing here: this return opens a line without them too.
 
 Lines (LOT_LONG_FINAL):
 
@@ -153,7 +153,7 @@ Episodes (MAP_STACKED) and transplant events, in date order:
 
 ## Patient R000005
 
-**Came back and opened a line (outside 4.8) - LEN, LOT 4.** LEN was last in LOT 1's regimen (BORT LEN). Its previous episode ran 2020-01-01 to 2020-04-30, 489 days before. LOT 3 (POM) did not carry it. 4.8's fold set is the immediately previous line's regimen only, so a drug from further back is out of its scope, and 4.3 does not hold it either: when LEN came back on 2021-09-01 it was a new agent like any other. It was an added medication: LOT 3 ended MED_ADD on 2021-08-31, and LEN opened LOT 4 (LEN). The 30 Aug 2026 rules changed nothing here: this return opened a line under the earlier reading too.
+**Came back and opened a line (outside 4.8) - LEN, LOT 4.** LEN was last in LOT 1's regimen (BORT LEN). Its previous episode ran 2020-01-01 to 2020-04-30, 489 days before. LOT 3 (POM) did not carry it. 4.8's fold set is the immediately previous line's regimen only, so a drug from further back is out of its scope, and 4.3 does not hold it either: when LEN came back on 2021-09-01 it was a new agent like any other. It was an added medication: LOT 3 ended MED_ADD on 2021-08-31, and LEN opened LOT 4 (LEN). 4.3 and 4.8 change nothing here: this return opens a line without them too.
 
 Lines (LOT_LONG_FINAL):
 

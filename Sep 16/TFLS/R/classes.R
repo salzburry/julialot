@@ -116,7 +116,7 @@ class_categories <- function(class_id, classes) {
 #   unmapped    a class the shell defines but maps to no category yet, so
 #               every cell in the column is reported unfilled rather than
 #               computed as a zero, which would claim the class is empty
-#   unknown     a name that is neither, which is a defect in the shell
+#   unknown     a name that is neither, which is an error in the shell
 class_selection <- function(value, classes) {
   parts <- split_soc_categories(value)
   if (!length(parts)) return(list(kind = "all", categories = character(0),

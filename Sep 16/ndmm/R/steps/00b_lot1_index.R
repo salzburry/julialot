@@ -82,7 +82,7 @@ build_ndmm_index_ineligible_codes <- function(con) {
   # the eligible-1L set: any agent on it may set the index, less steroids
   # (dropped where NDMM_MMA_CODELIST is built) and less belantamab (barred
   # below). There is no separate eligibility file.
-  # NDMM_INDEX_EXCLUDED_ABBRS bars a named agent if the study team asks for it.
+  # NDMM_INDEX_EXCLUDED_ABBRS bars each agent it names.
   # Empty by default, and every entry is checked against the code list.
   abbrs <- split_setting(NDMM_INDEX_EXCLUDED_ABBRS)
   codes <- split_setting(NDMM_INDEX_EXCLUDED_CODES)
@@ -413,9 +413,8 @@ build_ndmm_other_malig_grain <- function(con, cfg) {
 
 # What criterion 5 costs at each reading of it.
 #
-# This build uses one day of follow-up enrollment - the index date itself -
-# because the study team asked for it, while the wider study text says three
-# months. Nobody can sign one off against the other without a number, so here
+# This build uses one day of follow-up enrollment - the index date itself
+# (DECISIONS.md 1) - while the wider study text says three months. Nobody can sign one off against the other without a number, so here
 # it is: how many pass criterion 5 at each window, and how many reach the final
 # cohort at each.
 #

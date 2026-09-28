@@ -2227,7 +2227,7 @@ ok(all(vapply(c("CLINTRIAL_PRE_DX", "CLINTRIAL_DX_TO_LOT1", "CLINTRIAL_POST_LOT1
    "the four windows are all cut at the 1L index or the diagnosis")
 ok(any(grepl("do not add it to them", ct, fixed = TRUE)),
    "...and the run log says which of them overlap")
-# The question the study team asked: trial evidence between the MM diagnosis
+# The question this answers: trial evidence between the MM diagnosis
 # and the 1L start.
 ok(any(grepl("m.event_dt >= a.MM_DX_DT", ct, fixed = TRUE)) &&
      any(grepl("m.event_dt <  a.LOT1_START_DT", ct, fixed = TRUE)),

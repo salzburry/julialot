@@ -561,8 +561,7 @@ regimen.** A drug is in that regimen only through an episode starting at or
 after that line's start (§3.3), and the return has to be inside the line being
 built, so exactly one line can have opened in between. A drug from further
 back is outside the set and is simply a new agent:
-`returning_drug_two_lines_back`. The row states the rule the study team asked
-for, with the scope settled at the previous line; widening that scope is what
+`returning_drug_two_lines_back`. The row states the rule, with the scope settled at the previous line; widening that scope is what
 would make it reachable, and that would be a change to the settled rule.
 
 **A return only joins the line that actually contains it.** While lines are

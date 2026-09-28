@@ -509,7 +509,7 @@ not, whether the exclusion should reach beyond emergency visits.
 
 ## Answered
 
-**Q1. Study period start.** Answered by the study team on 16 September 2026:
+**Q1. Study period start.** Answered by the study team:
 **01 Jan 2018**, the §7.1 body text; the two figures' 01 Jan 2016 is a
 leftover. `STUDY_START=2018-01-01` and the 1L index floor `2019-01-01` are the
 shipped defaults of `ndmm/`, `lot/engine/` and this package, and this package

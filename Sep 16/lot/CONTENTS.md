@@ -38,7 +38,7 @@ contract. The full list of what a run writes is in `FILES.md`.
 ### `qc/` — 40 checks on a finished run
 
 Not a re-implementation of the rules: each check states a property the lines
-must have, and counts the rows that break it. A `fail` is a defect, a `warn` is
+must have, and counts the rows that break it. A `fail` is an error, a `warn` is
 worth reading, an `info` is context. The report names an example row for each
 finding, with the patient identifier masked to its last six characters so the
 file can be circulated; anything that did not pass carries **why it matters**,

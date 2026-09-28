@@ -1,7 +1,7 @@
 # The variables package — how it works
 
 An R package that turns a finished lines-of-therapy run into the analytical
-cohorts and variables the 26 August 2026 protocol asks for. It builds no line
+cohorts and variables the protocol asks for. It builds no line
 and no MM cohort of its own: the cohort build makes the population, `lot/`
 makes the lines, and this reads both and writes only its own `S_*` tables.
 

@@ -1116,7 +1116,7 @@ msg <- tryCatch({ env$check_lot1_invariants(NULL, list()); NULL },
                 error = conditionMessage)
 ok(!is.null(msg) && grepl("connection reset", msg, fixed = TRUE) &&
      !grepl("internally inconsistent", msg, fixed = TRUE),
-   "a query that cannot run surfaces as itself, not as a LOT1 defect")
+   "a query that cannot run surfaces as itself, not as a LOT1 error")
 rm("db_q", envir = env)
 
 cat("\n-- the cohort is pinned, not re-read --\n")
@@ -2473,7 +2473,7 @@ cat("\n-- a transplant inside a line's window cannot be left outside the line --
 
 # The hold date is bounded by the window. Unbounded, it would drag a line's end
 # out to a transplant that belongs to the NEXT line, which is the opposite
-# defect and a much louder one.
+# error and a much louder one.
 s05b <- paste(readLines(file.path(ROOT, "R", "steps", "05b_lot1_sct.R"),
                         warn = FALSE), collapse = "\n")
 # From the CASE, not from the comment above it - prose naming the window would

@@ -61,7 +61,7 @@ check_skip_wiring <- function(path = .suite_path) {
     return(skip_note(paste0("this suite's own source could not be located, ",
                             "so its skip wiring is unchecked")))
   # A path that names no file is different: the suite worked out where it lives
-  # and got it wrong, which is a defect in this file rather than a missing
+  # and got it wrong, which is an error in this file rather than a missing
   # capability. It returned quietly before, and two suites that resolved their
   # path AFTER a setwd() spent every run with this guard off - silently, and
   # under exactly the invocation the runbook documents.
@@ -358,7 +358,7 @@ ok({ s <- class_selection("GAP", CL)
      identical(s$kind, "unmapped") && has(s$why, "no SOC category") },
    "a class mapped to nothing is unmapped, not empty: the cells say so rather than printing a zero")
 ok(identical(class_selection("Quadruplet", CL)$kind, "unknown"),
-   "a name that is neither a class nor a category is a defect in the shell")
+   "a name that is neither a class nor a category is an error in the shell")
 ok({ s <- class_selection("POM_TRIP", CL)
      identical(s$categories, "Other triplet (non-anti-CD38)") && s$drug == "POM" },
    "a class may refine the study's category with a drug the regimen has to hold")

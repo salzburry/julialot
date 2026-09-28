@@ -3,7 +3,7 @@
 Every eligibility rule the protocol states, quoted with its section, and how
 the build operationalises it.
 
-Source: the GSK **223926** protocol, effective **26 August 2026**. The criteria
+Source: the GSK **223926** protocol. The criteria
 are in §7.1, §7.2, §7.2.1.1, §7.2.1.2 and §7.4.1.1; quoted text is verbatim.
 
 Where to read further:

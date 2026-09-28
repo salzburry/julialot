@@ -129,7 +129,7 @@ Without it, that one tab says so and every other tab is unaffected.
 has attached and does not see another run's artifacts. Create the Dataset
 first: the Job does not make one, it writes into whatever is mounted at
 `DASH_SNAPSHOT_DIR`, so with no writable Dataset there it writes into the run's
-own container, which disappears with it, or fails on a read-only path. Create
+own scratch space, which disappears with it, or fails on a read-only path. Create
 or select a writable Dataset in the project, attach it to the Job and to the App
 (the Data step of the publish dialog), and point `DASH_SNAPSHOT_DIR` at its
 mount.

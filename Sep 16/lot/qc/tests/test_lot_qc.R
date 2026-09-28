@@ -52,7 +52,7 @@ check_skip_wiring <- function(path = .suite_path) {
     return(skip_note(paste0("this suite's own source could not be located, ",
                             "so its skip wiring is unchecked")))
   # A path that names no file is different: the suite worked out where it lives
-  # and got it wrong, which is a defect in this file rather than a missing
+  # and got it wrong, which is an error in this file rather than a missing
   # capability. It returned quietly before, and two suites that resolved their
   # path AFTER a setwd() spent every run with this guard off - silently, and
   # under exactly the invocation the runbook documents.
@@ -144,7 +144,7 @@ stops(check_qc_catalogue(list(modifyList(LOT_QC_CHECKS[[1]], list(sql = "SELECT 
 cat("\n-- every check answers the same shape --\n")
 # The runner reads N_BAD off every result and nothing else. A check that
 # returned a different shape would be scored as an error, which reads in the
-# report like a defect in the run rather than in the check.
+# report like an error in the run rather than in the check.
 ok(all(vapply(SQL, function(s) has(s, "AS N_BAD"), logical(1))),
    "each one selects N_BAD")
 ok(all(vapply(SQL, function(s) has(s, "AS DETAIL"), logical(1))),
@@ -370,11 +370,11 @@ ok(has(SQL$D3, "= 'STEROID'"),
    "D3 looks for steroids in the episodes, which is where any would survive")
 # Steroids are excluded from lines by class at every decision point, and the
 # rollup drops them as it loads. A steroid episode surviving that is a state
-# the build tolerates rather than a line defect, so a run over a production
+# the build tolerates rather than a line error, so a run over a production
 # list still carrying dexamethasone must not fail its QC for it.
 d3 <- Filter(function(c_i) identical(c_i$id, "D3"), LOT_QC_CHECKS)[[1]]
 ok(identical(d3$severity, "warn"),
-   "...and it reports rather than fails: the list's state, not a line defect")
+   "...and it reports rather than fails: the list's state, not a line error")
 # B8: the confirmation window. The count is only meaningful against this run's
 # own window - a hardcoded 90 would misread a run built with a different one,
 # and it reads lot_discon_confirm_days now that the run records it rather than
@@ -497,7 +497,7 @@ ok(has(SQL$E5, "WHERE a.n_lines > 0"),
 # And only from the first line onward. The SCT step keeps claims from
 # INDEX_DATE and LOT1 opens on the first non-steroid episode, so a transplant
 # can land before any line exists. Splitting on whether the patient has a line
-# at all would make that mismatch a blocking defect for one patient and a
+# at all would make that mismatch a blocking error for one patient and a
 # reported number for another.
 ok(has(SQL$E5, "AND a.dt >= a.first_start"),
    "...and only from the day their first line starts")

@@ -1,6 +1,6 @@
 # TFLS - the requested table shells, filled
 
-The study team asked for a set of table shells: sample selection, baseline
+The study's table shells cover sample selection, baseline
 characteristics by line of therapy and by subgroup, safety and healthcare
 resource use at 1L and 2L, secondary malignancies, and treatment outcomes by
 regimen class and by subgroup.
@@ -223,7 +223,7 @@ lines belong to no class, so the class columns do not sum to `Overall`.
 ## What a column can be cut by
 
 A row can only be cut the way the table it reads is cut. The columns that
-cannot be filled are left in place: they state what was asked for, and
+cannot be filled are left in place: they state what the shell specifies, and
 `tfls_unfilled.csv` names the table that cannot answer it.
 
 **Tables of totals.** `S_SAFETY_RATES`, `S_HCRU_RATES`, `S_MALIGNANCY_RATES`

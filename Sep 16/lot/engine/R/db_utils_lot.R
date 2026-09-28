@@ -21,7 +21,7 @@ DASH  <- strrep("-", 70)
 #      process exits, and a log that is gone by the time anyone looks is a log
 #      nobody was told they did not have.
 # The process id is in the name so that two runs starting in the same second
-# never append to one file. Times are the container's local clock, and the
+# never append to one file. Times are the run's local clock, and the
 # announcement names its zone.
 
 .run_log <- new.env(parent = emptyenv())

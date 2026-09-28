@@ -375,7 +375,7 @@ VIGNETTES <- list(
                     "confirmed short course opens the next line on its own ",
                     "first day; 4.8 says a previous line's drug coming back ",
                     "joins the line it returns in. Both cannot hold, and the ",
-                    "study team's words settle it - the new line starts when ",
+                    "rule's own words settle it - the new line starts when ",
                     "the melphalan appears. 4.8 stands back. Without that, 2L ",
                     "named a drug whose only episode began after 2L had ",
                     "ended, and its end date and reason moved with it.")),
@@ -407,7 +407,7 @@ VIGNETTES <- list(
          "A new line at day 450. B is a 1L drug and the fold set is the ",
          "IMMEDIATELY previous line's regimen, so B is not in it at all - the ",
          "count is never asked, and B opens a line as any other agent would."),
-       why = paste0("The outcome the study team's note describes for two ",
+       why = paste0("The outcome the rule describes for two ",
                     "advances, reached by the scope rather than by the count. ",
                     "Scoped to the previous line the count cannot reach two, ",
                     "so this pins the ANSWER the 'two or more' clause gives ",
@@ -425,7 +425,7 @@ VIGNETTES <- list(
        expected = function(p) paste0(
          "No new line. Two agents started 2L, but they advanced the line ONCE ",
          "between them, so B sees one advance and joins 2L."),
-       why = paste0("The request counts agents advancing the line twice or ",
+       why = paste0("The rule counts agents advancing the line twice or ",
                     "more. Counting each drug that opened a line made a ",
                     "doublet two advances and refused a fold it should take.")),
 
@@ -608,7 +608,7 @@ VIGNETTES <- list(
        why = paste0("The fold set is the IMMEDIATELY previous line's regimen ",
                     "and no further. Widening it is the one change that would ",
                     "make the rule's two-or-more clause reachable, and it is ",
-                    "a change to the rule the study team settled, not a ",
+                    "a change to the settled rule, not a ",
                     "detail of how it is measured.")),
 
   list(id = "returning_drug_same_day_as_the_transplant",

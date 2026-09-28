@@ -524,7 +524,7 @@ check_cohort_index_exclusions <- function(con, cfg, cohort_run_id = "") {
          "different cohort. It recorded NDMM_INDEX_EXCLUDED_ABBRS as '",
          paste(recorded, collapse = ","), "'.\nRe-run the cohort build with ",
          "NDMM_INDEX_EXCLUDED_ABBRS naming them, or set COHORT_INDEX_EXCLUSIONS ",
-         "to what the study team agreed.", call. = FALSE)
+         "to the agents the study bars.", call. = FALSE)
   log_msg("  cohort build barred from the 1L index: ",
           if (length(barred)) paste(barred, collapse = ", ")
           else "nothing the code list could set one with")

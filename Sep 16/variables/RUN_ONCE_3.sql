@@ -38,9 +38,8 @@
 --  NO PLACEHOLDERS. Block 0 rebuilds the same proxy population round two used,
 --  so every number is directly comparable to round two's.
 --
---  RUN 08 SEP 2026. Every returned number is written up under
---  "Answered by the warehouse, 08 Sep 2026" in
---  ../OPEN_QUESTIONS.md. This file is kept as the record of what was asked.
+--  Every returned number is written up in ../OPEN_QUESTIONS.md. This file is
+--  kept as the record of the queries behind them.
 --
 --  ONE STATEMENT EARNED A RE-TEST. Block 5 imputes the 15th of the month from
 --  YMDOD, which is month-precision, so a patient who died on the 25th with a

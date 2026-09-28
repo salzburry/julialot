@@ -9,7 +9,7 @@
 #
 # severity:
 #   fail   the algorithm's own definition says this cannot happen. A non-zero
-#          count is a defect in the build, not a property of the data.
+#          count is an error in the build, not a property of the data.
 #   warn   worth a human's eye. Real data can produce it.
 #   info   counted and reported, never scored. These are the numbers that say
 #          how much a documented ambiguity actually costs on this cohort.
@@ -220,7 +220,7 @@ LOT_QC_CHECKS <- list(
                     "30 days, which is a shape the build really produces. ",
                     "Naming the allowed start types instead would fail on it: ",
                     "leave SCT_AUTO off the list and a transplant that opened ",
-                    "a later line with no drug behind it reads as a defect. ",
+                    "a later line with no drug behind it reads as an error. ",
                     "So this asks about 'MED' rather than listing the rest. ",
                     "A5 pins LOT_START_TYPE to its four ",
                     "values, so a new one cannot arrive here unannounced."),
@@ -479,7 +479,7 @@ LOT_QC_CHECKS <- list(
                     "because in a real-world claims study a patient we stop ",
                     "seeing fills for has not necessarily stopped treatment. ",
                     "So a DISCONTINUATION inside the window is fine when a ",
-                    "later line exists, and a defect when none does - the ",
+                    "later line exists, and an error when none does - the ",
                     "buffer should have censored that one. Lines at the ",
                     "max_lot cap are exempt: the build stops there, so the ",
                     "confirming line would not have been built either way."),
@@ -1030,18 +1030,18 @@ LOT_QC_CHECKS <- list(
                     "between two of them. ",
                     "A failure, not a warning. This was a warn on the reasoning ",
                     "that an event past the end of observation is data rather ",
-                    "than a defect - but 05_sct.R bounds every claim source to ",
+                    "than an error - but 05_sct.R bounds every claim source to ",
                     "the patient's INDEX_DATE and OBS_END_DT, so TX_AUTO_DATES ",
                     "cannot hold one. ",
                     "Scoped to the span where the build had a line to give. A ",
                     "transplant BEFORE the patient's first line is not an ",
-                    "ownership defect: the SCT step keeps claims from ",
+                    "ownership error: the SCT step keeps claims from ",
                     "INDEX_DATE, LOT1 opens on the first non-steroid episode, ",
                     "and nothing makes those the same day - so a transplant in ",
                     "between belongs to no line and no rule could have given it ",
                     "one. Whether the patient later starts a line is beside the ",
                     "point, and gating on it made the same mismatch a blocking ",
-                    "defect for one patient and a reported number for another. ",
+                    "error for one patient and a reported number for another. ",
                     "E5b carries both of those cases."),
        needs = c("long", "auto"),
        sql = function(t, p) counted(paste0("
@@ -1076,14 +1076,14 @@ LOT_QC_CHECKS <- list(
                     "later than it. The SCT step keeps claims from INDEX_DATE, ",
                     "and nothing ties INDEX_DATE to the first episode, so both ",
                     "are shapes the build produces. ",
-                    "Neither is a defect in how lines are built - there was no ",
+                    "Neither is an error in how lines are built - there was no ",
                     "line to build the transplant into - and both are the same ",
                     "disagreement between the cohort's own indexing and this ",
                     "package's episode derivation that the attrition funnel ",
                     "reports as a RECONCILIATION step. ",
                     "Kept out of E5 so that check can fail. Folded in, a run ",
                     "would go red on a known cohort question rather than on an ",
-                    "ownership defect, and the report could not tell the two ",
+                    "ownership error, and the report could not tell the two ",
                     "apart. Split the other way - by whether the patient has ",
                     "any line at all - and one patient's pre-index transplant ",
                     "blocks the run while another's is a number, on a ",
@@ -1399,7 +1399,7 @@ qc_markdown <- function(res, run_id, pfx, p, devs) {
     if (is.null(c_i)) NULL else c_i[[nm]]
   }
 
-  # The outcomes that ask the reader to DO something: a defect, something worth
+  # The outcomes that ask the reader to DO something: an error, something worth
   # reading, and a check that could not run at all - for that last one the why
   # is what it would have proved, which is the thing a reader has lost.
   #

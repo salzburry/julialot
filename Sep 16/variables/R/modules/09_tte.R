@@ -1,7 +1,6 @@
 # TTNT, TTD and OS - Table 5.
 #
-# The endpoint conventions REVERSED between the June and August 2026 versions.
-# The August ones open the interval ON the
+# The protocol's endpoint conventions open the interval ON the
 # index (included) and close it BEFORE the event (excluded), so every duration
 # is datediff(event, index) with no adjustment.
 #

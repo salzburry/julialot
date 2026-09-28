@@ -1,7 +1,7 @@
 # Clinical-trial evidence, anchored on the 1L index.
 #
 # Not a criterion. Clinical trial does not filter this cohort and must not
-# start: this is a descriptive flag the study team asked for, and the funnel is
+# start: this is a descriptive flag, and the funnel is
 # built from NDMM_CRITERIA alone.
 #
 # It gets its own table rather than columns on NDMM_FLAGS_ALL. Every column
@@ -11,8 +11,7 @@
 #
 # ---- why it exists -------------------------------------------------------
 #
-# The study team's question is about clinical trial evidence against the 1L
-# start:
+# The question is about clinical trial evidence against the 1L start:
 #
 #   "was the POMA recorded at LOT1 really first line, or did trial therapy
 #    come before it?"

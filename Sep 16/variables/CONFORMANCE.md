@@ -8,7 +8,7 @@ evidence §7.9 asks for.
 **Sources.** The non-interventional study protocol for study 223926, *Unmet
 Needs and Rates of Key Background Safety Events of Interest Relating to
 Treatment Use among Newly Treated and Relapsed/Refractory Patients with
-Multiple Myeloma*, effective date **26 August 2026**; the Optum Clinformatics
+Multiple Myeloma*; the Optum Clinformatics
 Data Mart V9.0 data dictionary; the Optum business rules (30 August 2022); the
 Optum enrolment documentation.
 
@@ -217,7 +217,7 @@ missing.
 | `HCRU-ONTREATMENT` — Healthcare utilization events \| Same as Primary Objective 1 \| During LOT treatment period (1L, 2L, 3L) / The number of all-cause … | Table 4 d35; s7.8.1 d47; Fig 1 note [2] d21 | matches | — |
 | `HCRU-CLAIM-STATUS` — Information for diagnoses of interest ... will be collected through claims-based diagnosis tables | s7.5 d40; s7.7 d42 (no rule on paid or denied claims) | not applicable | — |
 | `SUPPRESS-25` — Stratifications with <25 patients will not be performed or may be regrouped due to low volumes. / If there are less than 25 patients in a … | s7.2.3 d26; s7.8 d43 | matches | — |
-| `TABLE4-D33-D34` — [illegible] - by sequence, the Primary Objective 1 rows for baseline safety events and healthcare utilization and the first Primary … | Table 4, d33-d34 (not legible) | ambiguous | Not legible in the protocol. The rows follow the June 2026 version's wording - `VARIABLES.md` §4. Q15, Q36. |
+| `TABLE4-D33-D34` — [illegible] - by sequence, the Primary Objective 1 rows for baseline safety events and healthcare utilization and the first Primary … | Table 4, d33-d34 (not legible) | ambiguous | Not legible in the protocol. How the build reads them - `VARIABLES.md` §4. Q15, Q36. |
 
 ### Secondary malignancy (Objective 3, Table 2, Table 4)
 

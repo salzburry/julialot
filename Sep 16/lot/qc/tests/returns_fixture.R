@@ -186,7 +186,7 @@ RETURNS_FIXTURE_TOTALS <- list(N_PATIENTS = 8, N_LINES = 20)
 # last episode in the line carries no MAP_DISCON_FLG leaves the line with none,
 # and the gate's IS NULL arm lets MED_ADD through.
 #
-# Returns a character vector of defects, empty where the fixture is clean.
+# Returns a character vector of errors, empty where the fixture is clean.
 returns_fixture_defects <- function(data = RETURNS_FIXTURE) {
   fin <- data$final; eps <- data$map
   d <- function(x) as.Date(as.character(x))

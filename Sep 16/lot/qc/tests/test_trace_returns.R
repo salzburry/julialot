@@ -55,7 +55,7 @@ check_skip_wiring <- function(path = .suite_path) {
     return(skip_note(paste0("this suite's own source could not be located, ",
                             "so its skip wiring is unchecked")))
   # A path that names no file is different: the suite worked out where it lives
-  # and got it wrong, which is a defect in this file rather than a missing
+  # and got it wrong, which is an error in this file rather than a missing
   # capability. It returned quietly before, and two suites that resolved their
   # path AFTER a setwd() spent every run with this guard off - silently, and
   # under exactly the invocation the runbook documents.
@@ -709,12 +709,12 @@ if (is.null(rr)) {
        has(nm, "4.7 suppresses a short melphalan course") &&
        has(nm, "not as 4.3's doing") && !has(nm, "Under 4.3"),
      "...but its paragraph does not credit 4.3, because 4.7 leaves the same signature")
-  ok(has(nm, "4.7 is older than those rules") && has(nm, "APPLY_MELP_RULE=off") &&
+  ok(has(nm, "4.7 applies with or without them") && has(nm, "APPLY_MELP_RULE=off") &&
        !has(nm, "would have opened a new line"),
-     "...and it drops the pre-rule counterfactual, which does not follow from a rule that predates 30 Aug 2026")
+     "...and it drops the pre-rule counterfactual, which does not follow from a rule that holds without 4.3 and 4.8")
   Pmo <- P; Pmo$melp_rule <- "off"
   nmo <- return_trace_narrative(CM[1, , drop = FALSE], rm14$lines, rm14$eps, Pmo, all_rows = CM)
-  ok(has(nmo, "Under 4.3") && has(nmo, "Before 30 Aug 2026"),
+  ok(has(nmo, "Under 4.3") && has(nmo, "Without 4.3 and 4.8"),
      "...while a run that did not apply the melphalan rule gets the ordinary paragraph: 4.3 is then the only candidate")
 
   # A line that ended CART_INIT: that branch is an added medication followed by
@@ -766,7 +766,7 @@ if (is.null(rr)) {
        has(n2, "came back on 2020-11-30, 334 days after LOT 1 opened") && has(n2, "Under 4.3") &&
        has(n2, "LOT 1 is 2020-01-01 to 2021-03-31 (DISCONTINUATION)"),
      "an own return's paragraph: the drug, the break, the return, and the line running on over it")
-  ok(has(n2, "Before 30 Aug 2026 the break released the drug") && has(n2, "would have ended DISCONTINUATION on 2020-04-30") &&
+  ok(has(n2, "Without 4.3 and 4.8 the break released the drug") && has(n2, "would have ended DISCONTINUATION on 2020-04-30") &&
        has(n2, "next line would have started on 2020-11-30 with LEN"),
      "...and what the reading before the rule made of it: a run-out confirmed, then a new line on the return")
   n3 <- nar("R000003", "own_return")
@@ -844,7 +844,7 @@ ok(has(src, 'Sys.getenv("TRACE_LINES", unset = "1,2")'),
    "TRACE_LINES defaults to 1,2 - the 2L question")
 ok(has(src, 'Sys.getenv("TRACE_N", unset = "12")'), "TRACE_N defaults to 12")
 ok(has(src, "if (!isTRUE(p$foldin) || !isTRUE(p$own_return_fold))") && has(src, "there is nothing to trace"),
-   "a run without both returning-drug rules is refused: the signatures would be defects, not the rules")
+   "a run without both returning-drug rules is refused: the signatures would be errors, not the rules")
 ok(has(src, "p <- return_trace_params(settings, run_id)") &&
      has(RT_SRC, 'p$gap <- qc_int(settings, "map_discon_gap_days")'),
    "the break length is read off the run's own recorded settings, not config.csv")
