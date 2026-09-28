@@ -27,7 +27,7 @@ so in a banner on every page.
 | **Scenario** | the run to show. A run that is not `complete`, or was driven by another study contract, is listed with its state or `[other contract]` beside it |
 | (under it) | the readings that differ between scenarios, and any notice about this run - not complete, or tables its own release record refuses |
 | **Selection** | cohort, line and period, and the two strata the rate tables are written by (SOC category and age group), offered from what the scenario's own tables carry. Cohort starts at `DASH_DEFAULT_COHORT`, a stratum at the line's own row |
-| **Suppress cells below N** | the floor, from `DASH_SUPPRESS_MIN_N` (25 or more) up to 200. It can be raised, never lowered below that |
+| **Suppress cells below N** | the floor. The slider starts at `DASH_SUPPRESS_MIN_N` (25 or more); its upper bound is 200, or that floor when it is higher. It can be raised, never lowered below that |
 | **Against** | a second scenario, for the Compare tab |
 
 | tab | what is on it |
