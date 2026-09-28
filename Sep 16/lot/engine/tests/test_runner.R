@@ -3000,7 +3000,7 @@ local({
   ok(!is.null(attr(st, "status")) && attr(st, "status") != 0L,
      "a run that errors under run_logged() still stops, and says so to the shell")
   ok(any(grepl("ERROR: SCHEMA ERROR: the reason", got, fixed = TRUE)),
-     "...and its reason is in the run log, where it used to reach the console alone")
+     "...and its reason is in the run log, not only on the console")
   ok(any(grepl("9530", got, fixed = TRUE)) && any(grepl("n_pat", got, fixed = TRUE)),
      "a table the run print()s is in the log, not only on the screen")
   ok(any(grepl("WARNING: a loud warning", got, fixed = TRUE)) &&

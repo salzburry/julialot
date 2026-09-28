@@ -24,8 +24,7 @@ cases.json: {"tables": {name: {"columns": {...}}, ...},
 A check reads several tables - a line against the cohort it came from, a
 regimen against the episodes behind it - so the fixture is a set of them, and
 a case supplies rows for whichever ones its defect lives in. The "planted" key
-and the n_planted column are those rows, under the name the harness has always
-used for them.
+and the n_planted column are those rows.
 Prints one TSV line per case: id, n_clean, n_planted, detail, error.
 """
 import json, sys

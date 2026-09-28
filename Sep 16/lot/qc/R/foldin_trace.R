@@ -220,7 +220,7 @@ foldin_trace_tx_sql <- function(t, patids) {
 
 # The same read as two single-table queries, each column explicitly typed.
 #
-# The union above is what the offline harness and the tests run, and it is the
+# The union above is what the tests run, and it is the
 # clearer statement of the question. Against the warehouse it is read one table
 # at a time instead, because the ODBC driver segfaulted on the union - and took
 # the whole R process with it, which no tryCatch can catch. The union's second

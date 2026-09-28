@@ -1,6 +1,6 @@
 # NDMM (1L newly-diagnosed multiple myeloma) cohort
 
-Stage 1 of the delivery. Builds the 1L NDMM cohort and its attrition for one
+Stage 1 of the study pipeline. Builds the 1L NDMM cohort and its attrition for one
 cohort prefix, and, once the LOT build has run, the 2L and 3L subset cohorts.
 
 - `RULES.md` - the criteria in plain language, for the study team.
@@ -523,5 +523,5 @@ cohort: `N_FROM`, `N_REACHED_LOT`, `N_CE_PRE`, `N_FINAL`,
 the LOT run and cohort attempt they came from. The three are replaced one at a
 time, so a run that died part-way leaves them with different
 `SUBSEQ_ATTEMPT`s. `NDMM_SUBSEQ_BUILD_STATUS` records each attempt as
-`started`, `complete` or `failed`. Nothing else in this delivery reads these
+`started`, `complete` or `failed`. Nothing else in the pipeline reads these
 three tables.

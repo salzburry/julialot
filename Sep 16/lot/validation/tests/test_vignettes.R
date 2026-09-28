@@ -83,11 +83,8 @@ check_skip_wiring <- function(path = .suite_path) {
 test_report_status <- function(pass, fail, skipped) {
   cat(sprintf("%d passed, %d failed, %d skipped\n", pass, fail, skipped))
   if (skipped > 0L) {
-    # What actually skipped, in its own words. This used to print the same
-    # sentence in every suite - "Install duckdb and sqlglot" - whatever the
-    # block had skipped for. On the dashboard suite that named the wrong
-    # remedy: the block wanted survival::, both of the named packages were
-    # already installed, and the reader was sent to reinstall them.
+    # What actually skipped, in its own words, so the remedy printed is the
+    # one each block asked for.
     cat("  ", skipped, " block(s) did not run, so this is NOT a clean run:\n", sep = "")
     for (r in skip_reasons) cat("    - ", r, "\n", sep = "")
     cat("  Fix those, or set ALLOW_SKIPPED_TESTS=TRUE to accept it.\n")

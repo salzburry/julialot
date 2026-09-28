@@ -234,7 +234,7 @@ RUN_METADATA_COLS <- c(
   # built from - not the cohort's NAME, which a rebuild keeps. Together these
   # say which three things these numbers rest on; a name says only one.
   LOT_CODE_MD5 = "string",
-  # The floor the LOT run was accepted against. A delivery may move it, so the
+  # The floor the LOT run was accepted against. A study may move it, so the
   # row has to say which one applied or a reader cannot tell a run that cleared
   # the shipped floor from one that cleared a lowered one.
   LOT_RULES_EPOCH = "string",

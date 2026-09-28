@@ -271,8 +271,8 @@ history".
 
 ### A rate of zero, with an interval
 
-The log-normal interval is undefined at zero events, and the row used to carry
-none. The exact Poisson limits for a count of 0 are **0** and **3.688879 / PY**,
+The log-normal interval is undefined at zero events, so the row carries the
+exact Poisson limits instead. For a count of 0 they are **0** and **3.688879 / PY**,
 scaled like the rate: seizures on 1L line 1 treatment, 4.8569 PY →
 `RATE 0, RATE_LO 0, RATE_HI 75950.57` per 100,000.
 

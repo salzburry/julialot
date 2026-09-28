@@ -38,7 +38,7 @@ RELEASE_NOT_RECORDED <- "nothing recorded - a build from before this column exis
 release_recoverable_blocks <- function(recoverable) {
   v <- trimws(as.character(recoverable %||% "")[1])
   # NA is not a value to interpolate into a refusal. as.character(NA) is
-  # NA_character_, nzchar() of which is TRUE, so an unnormalised NA used to
+  # NA_character_, nzchar() of which is TRUE, so an unnormalised NA would
   # fall through this function and come back out in the message.
   if (is.na(v) || !nzchar(v) || identical(toupper(v), "NA"))
     return(RELEASE_NOT_RECORDED)

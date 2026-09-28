@@ -54,8 +54,8 @@ for (f in c("config_223926.R", "db_utils_223926.R", "registry.R", "contract.R",
 # tables it prints, its warnings, and the reason it stopped, if it does. The
 # error line R prints itself goes to stderr, which the tee does not carry, so
 # run_logged() writes the reason into the file as the error is raised.
-# Not on a DRY_RUN, which prints a plan, reads nothing, and is as often run on
-# a laptop with no results folder as on Domino.
+# Not on a DRY_RUN, which prints a plan, reads nothing, and may run where
+# there is no results folder.
 if (!interactive() &&
     !identical(toupper(Sys.getenv("DRY_RUN", unset = "FALSE")), "TRUE"))
   start_run_log()

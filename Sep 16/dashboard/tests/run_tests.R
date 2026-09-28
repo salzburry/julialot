@@ -16,7 +16,7 @@
 # dashboard/dashboard/tests/run_tests.R - a file that does not exist. That is
 # the path check_skip_wiring() reads, and it returns quietly when the file is
 # missing, so the guard on this suite's skip wiring was off under exactly the
-# invocation the delivery README documents. It ran only when the suite was
+# invocation the study README documents. It ran only when the suite was
 # started from its own directory, which is the case that needs it least.
 .suite_path <- local({
   a <- grep("^--file=", commandArgs(FALSE), value = TRUE)
@@ -88,11 +88,8 @@ check_skip_wiring <- function(path = .suite_path) {
 test_report_status <- function(pass, fail, skipped) {
   cat(sprintf("%d passed, %d failed, %d skipped\n", pass, fail, skipped))
   if (skipped > 0L) {
-    # What actually skipped, in its own words. This used to print the same
-    # sentence in every suite - "Install duckdb and sqlglot" - whatever the
-    # block had skipped for. On the dashboard suite that named the wrong
-    # remedy: the block wanted survival::, both of the named packages were
-    # already installed, and the reader was sent to reinstall them.
+    # What actually skipped, in its own words, so the remedy printed is the
+    # one each block asked for.
     cat("  ", skipped, " block(s) did not run, so this is NOT a clean run:\n", sep = "")
     for (r in skip_reasons) cat("    - ", r, "\n", sep = "")
     cat("  Fix those, or set ALLOW_SKIPPED_TESTS=TRUE to accept it.\n")
@@ -245,7 +242,7 @@ cat("\nevery part of a warehouse table name is checked before it is a query\n")
      "what quoting cannot survive is refused: a backtick, a line break, nothing at all")
   ok(is.na(sql_name(c("a", "b"))) && is.na(sql_name(NA)),
      "...and so are a vector and a missing value")
-  # What actually reaches the driver, for the case the review probed.
+  # What actually reaches the driver.
   local({
     seen <- NULL
     ws <- warehouse_source(
@@ -270,7 +267,7 @@ cat("\nevery part of a warehouse table name is checked before it is a query\n")
 
 cat("\none vocabulary, stated in three folders\n")
 {
-  # Each delivered folder has to run on its own, so the stratum labels are
+  # Each folder has to run on its own, so the stratum labels are
   # written out in the package registry, the shells' reader and this folder's
   # spec. That is three copies of one vocabulary, and a value changed in one
   # of them would not fail anywhere - the tables would simply stop lining up,
@@ -604,10 +601,10 @@ cat("\nwithholding a cell is not the same as hiding it\n")
   b3 <- count_bar_data(bar_d(c(a = 60, b = 3, c = 4)), bspec, "G", 25L)
   ok(isTRUE(b3$ok) && length(b3$labels) == 1L,
      "two bars already below the floor need no third")
-  # The case the chart and the table disagreed about. With only two
+  # A case where the chart and the table must agree. With only two
   # categories the surviving bar plus the caption's total IS the withheld
-  # one, so there is no chart to draw - which is what the table has always
-  # said about two levels.
+  # one, so there is no chart to draw - which is what the table says about
+  # two levels.
   b4 <- count_bar_data(bar_d(c(a = 60, b = 3)), bspec, "G", 25L)
   ok(!isTRUE(b4$ok),
      paste0("a chart of two categories, one under the floor, is withheld ",
@@ -701,8 +698,7 @@ cat("\nwithholding a cell is not the same as hiding it\n")
   # while the floor is tested on PATIENTS, and it needs a group left
   # standing to make it: with two groups and one under the floor there is
   # no chart at all, because the survivor plus the caption's total is the
-  # withheld one. The two-group fixture this used to have asserted that the
-  # survivor was drawn, which is the disclosure the chart now refuses.
+  # withheld one. Drawing the survivor is the disclosure the chart refuses.
   sp_lot <- table_spec("LOT_LONG_FINAL")
   lot <- rbind(
     data.frame(PATID = rep(sprintf("B%02d", 1:40), each = 2), LOT_NUM = 1L,
@@ -797,9 +793,8 @@ cat("\nwithholding a cell is not the same as hiding it\n")
 
   # --- the warehouse the LOT build and the study run were given ---
   #
-  # Under their names. An environment that carried those two used to leave
-  # the dashboard with no schema, because it read the same fact under a name
-  # of its own only.
+  # Under their names, so an environment that carried those two gives the
+  # dashboard its schema too.
   local({
     vars <- c("DASH_CATALOG", "DATABRICKS_CATALOG", "DASH_WORK_SCHEMA",
               "PROJECT_WORK_SCHEMA", "WORK_SCHEMA", "DOMINO_USER_NAME",
@@ -1181,7 +1176,7 @@ cat("\nwhat a panel is allowed to show\n")
   # The old reading. 505 is the mean of 1000 and 10 - neither rate, and not
   # the pooled 19.8 either.
   ok(abs(mean(rates$RATE) - 505) < 1e-9,
-     "the average of the two rates is 505, which is what the chart used to draw")
+     "the average of the two rates is 505, which is not what the chart draws")
   ok(!any(abs(c(1000, 10) - 505) < 1e-9),
      "...and 505 is not either stratum's rate")
 
@@ -1554,11 +1549,11 @@ source(file.path(here, "jobs", "export_lib.R"))
      "...and the job asks before it writes the first table, not after")
   ok(grepl("SNAPSHOT_ALLOW_RECOVERABLE", jb, fixed = TRUE),
      "...with one named way past it, so exporting anyway is a decision someone made and not a default")
-  # What a reader is told to do INSTEAD of handing the Dataset out. The advice
-  # used to be "share the S_*_RELEASE tables from it", which is wrong twice:
-  # six tables have a released copy and the rest of what a panel draws has
-  # none, so that extract is incomplete for a reader and unsuppressed wherever
-  # it is not. The shells are the artefact that is neither.
+  # What a reader is told to do INSTEAD of handing the Dataset out. Sharing
+  # the S_*_RELEASE tables from it is wrong twice: seven tables have a
+  # released copy and the rest of what a panel draws has none, so that extract
+  # is incomplete for a reader and unsuppressed wherever it is not. The shells
+  # are the artefact that is neither.
   local({
     ap <- paste(readLines(file.path(here, "app.R"), warn = FALSE), collapse = "\n")
     ok(grepl("release_refused_tables(s$release_recoverable,\n                                      s$release_recoverable_tables)",
@@ -1915,7 +1910,7 @@ ok(lot_run_bound(SRC, SCENARIOS[[1]]),
        "one unrecognised name discards the whole list, because a field that is partly wrong is not one to act on the rest of")
     ok(!length(release_named_tables("S_SAFETY_RATES_RELEASE")),
        "...and the list names the table, not its released copy, so the two spellings cannot mean different refusals")
-    # The Tables tab fills the same shells the sibling delivery does, and it
+    # The Tables tab fills the same shells the sibling folder does, and it
     # does it through this reader rather than one of its own - so the verdict
     # reaches a shell cell by the same route it reaches a panel, and the two
     # cannot show a number the other refuses.
@@ -2627,7 +2622,7 @@ cat("\nthe requested table shells, on a tab of their own\n")
   if (is.na(old)) Sys.unsetenv("SHOW_SHELL_TABLES") else
     Sys.setenv(SHOW_SHELL_TABLES = old)
 
-  # The shells are a sibling delivery. Without them this tab says so, and
+  # The shells are a sibling folder. Without them this tab says so, and
   # nothing else on the page changes - a deployment that left one folder out
   # is not a dashboard that will not start.
   absent <- tfls_ready(file.path(tempdir(), "no-such-shell-folder"))
@@ -2671,9 +2666,8 @@ cat("\nthe shells are filled at the sidebar's floor, and no lower\n")
     # not T4: this fixture's survival curves censor fewer than 25 of their 100
     # patients, and a curve publishes its censored as DENOM less N, so every T4
     # cell is withheld at 25 and there is no allowed cell there to look for.
-    # The cell picked is a PUBLISHED one - the first filled cell used to be
-    # taken on trust, and was published only because the old rule let a
-    # curve's small censored count through.
+    # The cell picked is a PUBLISHED one, not the first filled cell taken on
+    # trust.
     pf <- shell_fill(ready, "F1", SRC, s, 25L)
     phi <- shell_fill(ready, "F1", SRC, s, 60000L)
     shown <- pf$cells$TEXT[pf$cells$FILLED == 1L & pf$cells$SECTION == 0L &

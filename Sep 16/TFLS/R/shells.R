@@ -62,7 +62,7 @@ selector_has <- function(values, x, kind) {
 # --- refusals ---------------------------------------------------------------
 #
 # Two conditions, because they mean different things to the runner: a shell
-# file that is not there yet is a delivery still being written, and a shell
+# file that is not there yet is a shell set still being written, and a shell
 # file that is there and wrong is a defect to fix.
 
 shell_stop <- function(file, row, ...) {
@@ -300,8 +300,8 @@ check_unique_order <- function(d, file) {
 }
 
 # What a statistic can do with its measure and its filter, checked before
-# anything is filled, because what it cannot use it used to drop without a
-# word.
+# anything is filled, so that what it cannot use is refused rather than
+# dropped without a word.
 #
 # A curve's measure is its endpoint and nothing else: a comparison on it was
 # never applied. The month a probability is read at is one number, at or after

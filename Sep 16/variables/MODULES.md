@@ -336,7 +336,7 @@ still carries
   still excludes on `NO_OTHER_CANCER_PRE_LOT1` and the others, 2L and 3L inherit
   that through nesting, and SEC2L drops X2.
 
-No stage of this delivery builds that table; it is a cohort build to write, not
+No stage of the pipeline builds that table; it is a cohort build to write, not
 a setting to flip.
 
 **`NDMM_FLAGS_ALL` cannot stand in.** The cohort build's flag table is one row

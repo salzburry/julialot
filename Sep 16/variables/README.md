@@ -1,6 +1,6 @@
 # NDMM study 223926
 
-Stage 3 of the delivery: the study package that turns the cohort (`ndmm/`)
+Stage 3 of the study pipeline: the study package that turns the cohort (`ndmm/`)
 and a finished lines-of-therapy run (`lot/`) into the study's cohorts, its
 variables and the released `S_*` tables. `CONTENTS.md` says what is in this
 folder, where to start and how to run it.

@@ -469,9 +469,7 @@ the later date.
 Why: I2 is age at the time of MM diagnosis, and "newly diagnosed" is the
 earliest one. The diagnosis date also gates the 1L index - the first therapy
 claim on or after it - so advancing it would let a later claim be recorded as
-first line for a patient whose real first line was at 17. The all-myeloma
-cohort (the `overall` package, not part of this delivery) applies age the same
-way.
+first line for a patient whose real first line was at 17.
 
 Moves: can only drop a patient, never change a diagnosis date. Lands on
 attrition step 2.

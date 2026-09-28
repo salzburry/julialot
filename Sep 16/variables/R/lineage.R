@@ -4,9 +4,8 @@
 # before anything is read. A run that failed part-way, was built over a
 # different cohort, or deviated from the LOT contract is refused.
 #
-# The LOT rules have changed more than once, and numbers built before the last
-# change are superseded, so a run older than that is refused by date as well as
-# by status. The date is `lot_rules_epoch` (config_223926.R), a setting rather
+# Numbers built before the LOT rules last changed are superseded, so a run
+# older than that is refused by date as well as by status. The date is `lot_rules_epoch` (config_223926.R), a setting rather
 # than a constant here: it moves whenever the engine's rules do.
 #
 # The date says WHEN a run executed, not WHAT executed. LOT_CODE_MD5 is the
@@ -316,7 +315,7 @@ check_lot_lineage <- function(con, cfg) {
   # own date was built by the older engine and one finished later was not, and
   # a date cannot tell them apart. The guard refuses what it cannot place,
   # which costs a rebuild on one day and is the direction that does not read a
-  # superseded number in silence. A delivery that needs that day back names a
+  # superseded number in silence. A study that needs that day back names a
   # different floor.
   epoch <- as.Date(cfg$lot_rules_epoch)
   if (!is.na(upd) && upd <= epoch)

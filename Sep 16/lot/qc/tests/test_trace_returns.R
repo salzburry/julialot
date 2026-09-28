@@ -78,11 +78,8 @@ check_skip_wiring <- function(path = .suite_path) {
 test_report_status <- function(pass, fail, skipped) {
   cat(sprintf("%d passed, %d failed, %d skipped\n", pass, fail, skipped))
   if (skipped > 0L) {
-    # What actually skipped, in its own words. This used to print the same
-    # sentence in every suite - "Install duckdb and sqlglot" - whatever the
-    # block had skipped for. On the dashboard suite that named the wrong
-    # remedy: the block wanted survival::, both of the named packages were
-    # already installed, and the reader was sent to reinstall them.
+    # What actually skipped, in its own words, so the remedy printed is the
+    # one each block asked for.
     cat("  ", skipped, " block(s) did not run, so this is NOT a clean run:\n", sep = "")
     for (r in skip_reasons) cat("    - ", r, "\n", sep = "")
     cat("  Fix those, or set ALLOW_SKIPPED_TESTS=TRUE to accept it.\n")
@@ -309,9 +306,8 @@ if (is.null(rr)) {
   ok(is.null(err(r)) && !any(r$PATID == "R000002"),
      "(g) DEX coming back after a break is not an own return: a steroid never opened a line")
 
-  cat("\n-- the shapes two independent readings of the engine went looking for --\n")
-  # Each of these was executed against the engine's own code by a reviewer and
-  # named a defect; each is the shape that defect was found on.
+  cat("\n-- the shapes the returning-drug rule has to get right --\n")
+  # Each is driven through the engine's own code.
 
   # A folded drug's LATER course, back after a confirmed break, is 4.3's and
   # not a second fold: the engine keeps it through the line's effective
@@ -845,7 +841,7 @@ cat("\n-- the runner --\n")
 src <- paste(readLines(file.path(ROOT, "trace_returns.R"), warn = FALSE), collapse = "\n")
 RT_SRC <- paste(readLines(file.path(ROOT, "R", "return_trace.R"), warn = FALSE), collapse = "\n")
 ok(has(src, 'Sys.getenv("TRACE_LINES", unset = "1,2")'),
-   "TRACE_LINES defaults to 1,2 - the 2L question, with the own returns inside 1L that used to make a 2L")
+   "TRACE_LINES defaults to 1,2 - the 2L question")
 ok(has(src, 'Sys.getenv("TRACE_N", unset = "12")'), "TRACE_N defaults to 12")
 ok(has(src, "if (!isTRUE(p$foldin) || !isTRUE(p$own_return_fold))") && has(src, "there is nothing to trace"),
    "a run without both returning-drug rules is refused: the signatures would be defects, not the rules")

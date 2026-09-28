@@ -1,6 +1,6 @@
 # The requested table shells, filled here.
 #
-# The shells are a sibling delivery: five CSVs saying which tables exist, what
+# The shells are a sibling folder: five CSVs saying which tables exist, what
 # each column selects and what each row reads, and the code that fills them
 # from a finished study run. This file loads that code and hands it the
 # dashboard's own reader, so a shell cell and the same figure on a tab come
@@ -50,7 +50,7 @@ TFLS_ABSENT <- paste(
 # The engine and the shells, loaded once per directory.
 #
 # Returns ok = FALSE and a reason rather than stopping: a missing sibling
-# folder is a deployment that left one delivery out, and the rest of the page
+# folder is a deployment that left one folder out, and the rest of the page
 # still has numbers on it.
 tfls_ready <- function(dir = tfls_dir()) {
   key <- paste0("dir:", dir)

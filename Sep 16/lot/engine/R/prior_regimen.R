@@ -123,7 +123,7 @@ discon_per_med_sql <- function(start_view, start_col, map_tbl = "map_stacked",
   # The scan starts at the line start and without this has no upper bound: a
   # base drug's later episodes chain forward for as long as the patient keeps
   # filling it. Bounding regimen membership at the date the line was cut short
-  # is only half the fix, since a refill of a drug that really is in the
+  # is only half of it, since a refill of a drug that really is in the
   # regimen still pushes the run-out past the transplant.
   upper <- if (is.null(end_col)) "" else paste0("
           AND ms.MAP_START_DT <= coalesce(ls.", end_col,

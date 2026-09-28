@@ -75,11 +75,8 @@ check_skip_wiring <- function(path = .suite_path) {
 test_report_status <- function(pass, fail, skipped) {
   cat(sprintf("%d passed, %d failed, %d skipped\n", pass, fail, skipped))
   if (skipped > 0L) {
-    # What actually skipped, in its own words. This used to print the same
-    # sentence in every suite - "Install duckdb and sqlglot" - whatever the
-    # block had skipped for. On the dashboard suite that named the wrong
-    # remedy: the block wanted survival::, both of the named packages were
-    # already installed, and the reader was sent to reinstall them.
+    # What actually skipped, in its own words, so the remedy printed is the
+    # one each block asked for.
     cat("  ", skipped, " block(s) did not run, so this is NOT a clean run:\n", sep = "")
     for (r in skip_reasons) cat("    - ", r, "\n", sep = "")
     cat("  Fix those, or set ALLOW_SKIPPED_TESTS=TRUE to accept it.\n")
@@ -307,10 +304,9 @@ local({
   ok(grepl("AND 1 = 0", pick("A9"), fixed = TRUE),
      "...while A9, which asks about the SPAN, is the one that reads the setting")
 })
-# C2's exemption belongs to the earlier returning-drug rule, where a confirmed
-# gap released the drug so it could be both in the regimen and the added
-# medication. LOT_RULES.md 4.3 withdrew that release, so under the settings the
-# study pins there is nothing to exempt.
+# C2's exemption belongs to the comparison rule, where a confirmed gap releases
+# the drug so it can be both in the regimen and the added medication. Under the
+# rule the study pins (LOT_RULES.md 4.3) there is nothing to exempt.
 ok(has(SQL$C2, "array_contains(split(coalesce(f.LOT_BASE_MEDS, ''), ' ')"),
    "C2 still catches an added medication that is already in the regimen")
 ok(!has(SQL$C2, "coalesce(r.PREV_DISCON, 0) = 0"),
@@ -618,7 +614,7 @@ ok(any(grepl("a/b", qc_markdown(piped, "r", "p_", P, ""), fixed = TRUE)),
      "...and C5's is the span bound, where 7.3 puts treatment a line does not name")
 }
 
-# The catalogue's SIZE is the one number the delivery's documents still quote,
+# The catalogue's SIZE is the one number the documents quote,
 # and this is what holds it. Every other count was dropped rather than pinned -
 # an assertion total is trivia a reader never acts on, and it went stale three
 # times because nothing read it. This one a reader does act on: it is how many

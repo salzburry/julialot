@@ -17,7 +17,7 @@
 # variables/variables/tests/run_tests.R - a file that does not exist. That is
 # the path check_skip_wiring() reads, and it returns quietly when the file is
 # missing, so the guard on this suite's skip wiring was off under exactly the
-# invocation the delivery README documents. It ran only when the suite was
+# invocation the study README documents. It ran only when the suite was
 # started from its own directory, which is the case that needs it least.
 .suite_path <- local({
   a <- grep("^--file=", commandArgs(FALSE), value = TRUE)
@@ -347,8 +347,8 @@ cat("\nwindow conventions\n")
      "a rate is per RATE_MULTIPLIER person-years")
   ok(grepl("50000", rate_sql("n", "py", cfg0(c(RATE_MULTIPLIER = "50000")))),
      "and the multiplier is a setting")
-  # Zero events: the log-normal interval is undefined, and the row used to
-  # carry no interval at all. The exact Poisson limits for a count of zero
+  # Zero events: the log-normal interval is undefined, so the row carries the
+  # exact limits instead. The exact Poisson limits for a count of zero
   # are 0 and -ln(0.025) / PY, scaled like the rate.
   ok(grepl("WHEN n = 0 AND py > 0 THEN 0.0 END", rate_ci_sql("n", "py", cfg, "lo"), fixed = TRUE) &&
        grepl("WHEN n = 0 AND py > 0 THEN 3.688879 / cast(py as double) * 100000 END",
@@ -638,7 +638,7 @@ cat("\nthe cohort table, as SQL names it\n")
   ok(sum(grepl("hive_metastore.wk.s223926_S_ELIGIBILITY",
                vapply(RUN$sql, function(x) x$sql, character(1)),
                fixed = TRUE)) >= 4,
-     "...and the modules that used to read it now read S_ELIGIBILITY, under the work schema")
+     "...and the modules read S_ELIGIBILITY instead, under the work schema")
 }
 
 cat("\nthe connection layer\n")
@@ -1315,11 +1315,11 @@ cat("\nthe rules that hold the numbers up\n")
   ok(is.na(lin_check(meta_err = "[UNRESOLVED_COLUMN] A column with name `COHORT_RUN_ID` cannot be resolved")),
      "...and so is one whose LOT_RUN_METADATA predates the columns, which is how an older writer's table answers")
 
-  # ABSENT and UNREADABLE are different answers. Every read failure used to
-  # become NULL, which check_cohort_attempt() read as an older LOT run with
-  # nothing recorded - so a permission refused, or a session dropped, was
-  # accepted as "legacy". A run that could pair a rebuilt cohort with another
-  # run's lines on the strength of an outage.
+  # ABSENT and UNREADABLE are different answers. A read failure taken as NULL
+  # would read as an older LOT run with nothing recorded - so a permission
+  # refused, or a session dropped, would be accepted as "legacy", and a run
+  # could pair a rebuilt cohort with another run's lines on the strength of
+  # an outage.
   perm <- "[INSUFFICIENT_PERMISSIONS] User does not have SELECT on table LOT_RUN_METADATA"
   e_perm <- lin_check(meta_err = perm)
   ok(!is.na(e_perm) && grepl("could not read", e_perm, fixed = TRUE) &&
@@ -1509,11 +1509,9 @@ cat("\nthe rules that hold the numbers up\n")
   ok(!is.na(lin_check(UPDATED_AT = "2026-08-01 00:00:00")),
      "and one built before the rules last changed")
 
-  # The epoch is a SETTING, and the reason is that it goes stale otherwise: the
-  # shipped value sat at an August rule change after a September one had
-  # superseded a further set of numbers, so every run between the two passed a
-  # check written to stop exactly that. These hold it to being read from the
-  # configuration rather than compiled in, in both directions.
+  # The epoch is a SETTING, so it can move with the rules. These hold it to
+  # being read from the configuration rather than compiled in, in both
+  # directions.
   #
   # ONE pin, three values, read by this assertion and by the engine tie at
   # the end of this block. The date and the fingerprint were two literals in
@@ -1522,32 +1520,18 @@ cat("\nthe rules that hold the numbers up\n")
   #
   # A prompt, not an interlock, and worth being exact about: these are three
   # comparisons, not one. Re-pinning a fingerprint and leaving the date
-  # passes. What cannot happen is a rule changing and nobody being stopped -
-  # which is the failure that put the epoch behind the engine twice, both
-  # times because nothing said anything at all.
+  # passes. What cannot happen is a rule changing and nobody being stopped.
   EPOCH_PIN <- list(
     date = "2026-09-22",
     # The engine's R, by its own code_fingerprint() - the same value it
     # records as CODE_MD5, so the two can be compared by eye.
     #
-    # Re-pinned from 6587c169 WITHOUT moving the date, and this is the one
-    # case that is right. The change was the run log - db_utils_lot.R and
-    # build.R, which tee the console into the file and log a failing run's
-    # reason - and the full statement chain the engine emits, 2L and 3L
-    # included, is byte-identical before and after it. No rule moved, so no line did, and a
-    # run built between the two is the same run: moving the date would refuse
-    # it for a change that alters nothing it built. Where the emitted SQL
-    # differs, the date moves too - that is what the date is for.
-    #
-    # And again from 2c095e6a, for the same reason: build.R started the log
-    # before loading the file that defines it, so the launcher stopped on
-    # "could not find function" before its first step. It now loads, then
-    # logs, then builds. The emitted chain, 2L and 3L included, is
-    # byte-identical again.
-    #
-    # And from 2b5f41f9: one log message stopped naming a check that is not
-    # part of this delivery. The emitted chain is byte-identical again.
-    engine = "a2b8a8bf433f5712b071a6757324e39e",
+    # A change that leaves the emitted statement chain byte-identical, 2L and
+    # 3L included, is re-pinned WITHOUT moving the date: no rule moved, so no
+    # line did, and moving the date would refuse runs for a change that alters
+    # nothing they built. Where the emitted SQL differs, the date moves too -
+    # that is what the date is for.
+    engine = "63967a029d1660fd237022e1ac336cb7",
     # ...and its shipped settings, which code_fingerprint() does not read.
     # Most of what decides a line is pinned in the engine's own CONTRACT and
     # so is inside the R, but the study window is not, and a build reading a
@@ -1565,7 +1549,7 @@ cat("\nthe rules that hold the numbers up\n")
      "...and the refusal names the date it applied and the setting that moves it")
   ok(is.na(lin_check(UPDATED_AT = "2026-09-21 00:00:00",
                      cfg = cfg0(c(LOT_RULES_EPOCH = "2026-09-01")))),
-     "LOT_RULES_EPOCH moves the floor, so a delivery can name its own")
+     "LOT_RULES_EPOCH moves the floor, so a study can name its own")
   ok(!is.na(lin_check(UPDATED_AT = "2026-09-23 00:00:00",
                       cfg = cfg0(c(LOT_RULES_EPOCH = "2026-10-01")))),
      "...in both directions")
@@ -1588,11 +1572,8 @@ cat("\nthe rules that hold the numbers up\n")
   # --- and the epoch is tied to the engine it was set for ---------------
   #
   # A date nothing holds to the code goes stale the next time the code
-  # changes, and this one did, twice: the shipped value named an August rule
-  # change after a September one, was moved to the September one, and was
-  # superseded again two days later by the very next change to the fold-in.
-  # Each time every run built in between passed a check written to stop
-  # exactly those runs, and nothing failed.
+  # changes, and every run built in between would pass a check written to
+  # stop exactly those runs.
   #
   # So the engine is fingerprinted - by its OWN function, not a restatement
   # of it - and compared to the fingerprint the shipped date was set for.
@@ -1624,12 +1605,12 @@ cat("\nthe rules that hold the numbers up\n")
     # them, and a rollup moving a drug to another agent moves lines without
     # touching either fingerprint. That is recorded per run instead, in
     # LOT_CODELIST_METADATA, which makes such a change visible between two
-    # runs and refuses nothing - the same limit LOT_CODE_MD5 has always had.
+    # runs and refuses nothing - the same limit LOT_CODE_MD5 has.
     # Hashed off the BYTES, with the line endings normalised in the bytes
     # and no string anywhere in the path.
     #
-    # Two things forced that. Git hands these files over as CRLF on Windows
-    # (i/lf w/crlf), so a hash of the file as it sits on disk differs there
+    # Two things forced that. A Windows checkout can carry these files with
+    # CRLF line endings, so a hash of the file as it sits on disk differs there
     # from the same content on a Linux checkout, and the pin would fail for
     # a reason that has nothing to do with the rules - the one message this
     # check must never send. And the obvious repair, reading the lines and
@@ -1673,9 +1654,8 @@ cat("\nthe rules that hold the numbers up\n")
     got <- c(engine = md5_of(do.call(c, lapply(eng_files, raw_lf))),
              settings = md5_of(raw_lf(file.path(eng, "config.csv"))))
     # The same settings with the other line endings are the same settings.
-    # Checked here rather than trusted, because the failure it prevents is
-    # one this machine cannot have: a Windows checkout gets this file as
-    # CRLF and a byte hash of it differs from the pin.
+    # Checked here rather than trusted: a Windows checkout can get this file
+    # as CRLF, and a byte hash of it would differ from the pin.
     local({
       crlf <- tempfile(); on.exit(unlink(crlf), add = TRUE)
       # Built from the NORMALISED bytes, not from the file as it sits: on a
@@ -1845,19 +1825,17 @@ cat("\nthe rules that hold the numbers up\n")
        "STUDY_CONTRACT_MD5 is the md5 of the contract's lines: the same for a CRLF copy, where a byte hash differs")
   })
 
-  # 10d. ONE connection across the delivery. The LOT build is the run that is
+  # 10d. ONE connection across the study folders. The LOT build is the run that is
   # verified against the warehouse, so everything else has to open it the
   # same way: the same call, on the same two variables. Checked against the
   # engine and the two siblings whenever they are beside this package - the
   # engine's own line is read from its source, not restated here.
   local({
-    # Found, not counted. The hop count was one too many for this package's
-    # depth after it was flattened up a level, and the block went from CHECKING
-    # the delivery to skipping it - nothing said so but the skip note.
+    # Found, not counted, so a change in this package's depth cannot turn the
+    # check into a skip.
     #
-    # The search stays INSIDE the delivery: this package's own folder, then the
-    # study root one above it. Reaching further would leave the delivery,
-    # which nothing in it may do.
+    # The search stays INSIDE the study folders: this package's own folder,
+    # then the study root one above it, and no further.
     up_to_root <- c(".", "..")
     top <- NA_character_
     for (up in up_to_root) {
@@ -1916,9 +1894,8 @@ cat("\nthe rules that hold the numbers up\n")
      "the HCRU QC puts a count first so the zero-row guard is not skipped")
 
   # 13. An unrecognised or blank ICD family matches neither family. Read off
-  # the statement the run emits, not the function's source - the normalisation
-  # used to live inside register_codelist_view(), which the harness stubbed
-  # out, so this SQL was never emitted, never parsed and never executed.
+  # the statement the run emits, not the function's source, so a stub of
+  # register_codelist_view() cannot hide it.
   ok(grepl("THEN 'ICD10' END", cl_sql, fixed = TRUE) &&
      !grepl("ELSE 'ICD10' END", cl_sql, fixed = TRUE),
      "the code-list side yields NULL for an unknown family, as the claim side does")
@@ -3845,7 +3822,7 @@ local({
   ok(!is.null(attr(st, "status")) && attr(st, "status") != 0L,
      "a run that errors under run_logged() still stops, and says so to the shell")
   ok(any(grepl("ERROR: SCHEMA ERROR: the reason", got, fixed = TRUE)),
-     "...and its reason is in the run log, where it used to reach the console alone")
+     "...and its reason is in the run log, not only on the console")
   ok(any(grepl("9530", got, fixed = TRUE)) && any(grepl("n_pat", got, fixed = TRUE)),
      "a table the run print()s is in the log, not only on the screen")
   ok(any(grepl("WARNING: a loud warning", got, fixed = TRUE)) &&
@@ -3864,11 +3841,8 @@ if (length(.fail))
   cat("failed:\n", paste0("  ", .fail, collapse = "\n"), "\n", sep = "")
 if (length(.skipped)) {
   cat("skipped:\n", paste0("  ", .skipped, collapse = "\n"), "\n", sep = "")
-  # The reasons are printed above; the remedy is whatever each one says. This
-  # used to add "Install python3 with sqlglot" whatever had skipped, which is
-  # the wrong remedy for the block that skips because the LOT engine is not
-  # beside this package - and sends the reader to install something that is
-  # already there.
+  # The reasons are printed above; the remedy is whatever each one says, not
+  # one line for every kind of skip.
   cat(length(.skipped), " block(s) did not run, so this is NOT a clean run. ",
       "Fix those, or set ALLOW_SKIPPED_TESTS=TRUE to accept it.\n", sep = "")
 }

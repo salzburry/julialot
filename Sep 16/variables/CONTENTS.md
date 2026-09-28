@@ -7,7 +7,7 @@ variables and the released `S_*` tables. It builds no line and no MM cohort of
 its own, so it can be re-run against a finished LOT run as often as needed.
 `README.md` has the protocol and the cohorts at a glance.
 
-The delivery's folders have to stay siblings. The dashboard finds this package
+The five study folders have to stay siblings. The dashboard finds this package
 at `../variables`, the engine at `../lot/engine` and the shells at `../TFLS`;
 the shell runner finds this package by `TFLS_PACKAGE_DIR`. Nothing uses an
 absolute path.

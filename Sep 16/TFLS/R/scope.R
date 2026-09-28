@@ -104,8 +104,8 @@ reading_is_true <- function(scope, setting)
 
 # What the study package writes, read from the contract IT emits.
 #
-# These three lists used to be restated here by hand, because a snapshot is
-# filled where the package is not installed and cannot be asked. A hand-written
+# A snapshot is filled where the package is not installed and cannot be asked,
+# and these three lists are not restated here by hand: a hand-written
 # restatement drifts, and it drifts dangerously: a table added to
 # SUPPRESSION_SPEC and not added here would be filled from with the
 # recoverability gate not knowing to refuse it, and a module output added there

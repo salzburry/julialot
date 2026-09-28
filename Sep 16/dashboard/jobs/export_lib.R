@@ -113,8 +113,8 @@ snapshot_lock <- function(out_dir) {
 
 # The set-aside and the discard of a published directory, under names no
 # reader lists: safe_segment() refuses a leading dot, so neither can appear
-# as a scenario. A killed swap used to leave `<prefix>.previous`, which the
-# snapshot source listed as a scenario of its own while `<prefix>` was gone.
+# as a scenario, and a killed swap cannot leave a `<prefix>.previous` that the
+# snapshot source lists as a scenario of its own while `<prefix>` is gone.
 set_aside_name <- function(to) file.path(dirname(to), paste0(".", basename(to), ".previous"))
 discard_name   <- function(to) file.path(dirname(to), paste0(".", basename(to), ".discard"))
 

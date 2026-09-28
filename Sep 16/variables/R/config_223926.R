@@ -170,12 +170,8 @@ cfg_defaults <- function(catalog = .env_chr("DATABRICKS_CATALOG", "hive_metastor
     # status row says, so the lineage check refuses it (R/lineage.R).
     #
     # A SETTING and not a constant, because it moves whenever the engine's
-    # rules do and a value compiled into the reader is only as good as the last
-    # person to bump it: the shipped default sat at the August rule change
-    # while a September one had already superseded a further set of numbers,
-    # and every run between the two dates passed a check written to stop
-    # exactly that. Named here, it can be moved for a delivery without editing
-    # the reader, and S_RUN_METADATA.LOT_RULES_EPOCH records whichever floor
+    # rules do. Named here, it can be moved without editing the reader, and
+    # S_RUN_METADATA.LOT_RULES_EPOCH records whichever floor
     # the run was actually accepted against.
     #
     # Not in CONTRACT: that list is the protocol's numbers, and a deviation

@@ -59,7 +59,7 @@ DESCRIBE TABLE <COHORT>;
 -- =========================================================================
 -- THE ONE THAT MATTERS MOST. The Optum business-rules document says DOD
 -- "cannot be joined since both tables are encrypted differently"; its own join
--- diagram draws a PATID edge to DOD; and the existing build joins on PATID.
+-- diagram draws a PATID edge to DOD; and the cohort build joins on PATID.
 -- DEATH_DT sets follow-up end, censors overall survival, and gates the
 -- time-to-event analysis set.
 --
@@ -117,7 +117,7 @@ GROUP BY YRDOB ORDER BY YRDOB LIMIT 12;
 -- =========================================================================
 -- Business rule 1 says '9' or '10'. Every code-list join in both builds treats
 -- anything else as matching NEITHER family, so such a row silently stops
--- qualifying or excluding anyone. The existing build reports these rather than
+-- qualifying or excluding anyone. The cohort build reports these rather than
 -- gating on them; whether that is enough depends on how many there are.
 
 SELECT ICD_FLAG, count(*) AS n
