@@ -776,8 +776,8 @@ if (is.null(rr)) {
   ok(has(n4, "LEN was last in LOT 1's regimen (BORT LEN)") && has(n4, "LOT 2 was opened by a transplant or CAR-T (SCT_AUTO)") &&
        has(n4, "4.8 refuses a fold across a procedure") &&
        has(n4, "It was an added medication: LOT 2 ended MED_ADD on 2020-11-30, and LEN opened LOT 3 (LEN).") &&
-       has(n4, "changed nothing here"),
-     "a return across a transplant-opened line: the refusal, the added medication read off LOT 2's own end reason, and that the rules changed nothing")
+       has(n4, "change nothing here"),
+     "a return across a transplant-opened line: the refusal, the added medication read off LOT 2's own end reason, and that the rules change nothing")
   n5 <- nar("R000005", "opens_line")
   ok(has(n5, "LOT 3 (POM) did not carry it") && has(n5, "immediately previous line's regimen only") &&
        has(n5, "it was a new agent like any other") && has(n5, "LOT 3 ended MED_ADD on 2021-08-31"),

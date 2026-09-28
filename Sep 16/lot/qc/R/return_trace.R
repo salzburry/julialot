@@ -642,7 +642,7 @@ return_trace_annotate <- function(lines, episodes, tx, cands, p, subs = NULL) {
 # and what the reading without 4.3 and 4.8 would have done - the same local
 # reading the fold narrative makes, stated for the patient's earliest return
 # only (the caveat foldin_trace_narrative explains). An opens_line row's says
-# why the return opened a line and that the rule changed nothing there.
+# why the return opened a line and that the rule changes nothing there.
 # What the line's own regimen covered before the return, as the engine chained
 # it: the regimen drugs the window admitted, and - since 4.4 makes a pair one
 # agent and the older engine's chain read the substitute's episodes as the
