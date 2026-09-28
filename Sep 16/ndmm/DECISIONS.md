@@ -224,8 +224,7 @@ solitary plasmacytoma, extramedullary plasmacytoma or plasma cell leukemia
 carrying a second plasma-cell neoplasm, or one disease? One disease: all nine
 stay overridden. Separate cancers: `mgus_only`. Whether `other_malig.csv`
 carries myeloma's own codes, and so whether the `mm_dx.csv` rule does real
-work, is answered from the CSVs by `other_malig_overlap.R` and on the first run
-by `NDMM_MM_ADJACENT_GROUPS`.
+work, is shown on every run by `NDMM_MM_ADJACENT_GROUPS`.
 
 ---
 

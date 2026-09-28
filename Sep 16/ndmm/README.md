@@ -284,10 +284,6 @@ use the same study window (DECISIONS 5).
 `INDEX_DATE`, no `FU_DAYS` below `FU_CE_DAYS`, and a patient count equal to the
 last attrition step.
 
-`followup_days.sql` is the follow-up distribution on both definitions, what
-ended follow-up, and the same by index year, paste-and-run over this table;
-only its last statement needs a LOT run.
-
 ### Clinical trial
 
 `NDMM_CLINTRIAL_FLAGS` asks whether trial therapy came before the recorded 1L.
@@ -486,8 +482,6 @@ three tables.
 | `build.R` | entry point for the 1L cohort, one prefix per run |
 | `build_subsequent_cohorts.R` | entry point for the 2L and 3L cohorts |
 | `config.csv` | every default setting; the prefix and the password are not here |
-| `followup_days.sql` | follow-up distribution over a built `NDMM_COHORT`, paste-and-run |
-| `other_malig_overlap.R` | what `other_malig.csv` says about myeloma - codes shared with `mm_dx.csv`, plasma-cell labels, which configured labels match - from the CSVs alone |
 | `R/build_ndmm.R` | the runner: `CONTRACT`, `CHOICES`, `CHECKPOINTS`, `OUTPUTS`, the preflight checks, `NDMM_CRITERIA` and the attrition, the NDC and `ICD_FLAG` checks, the cohort table, metadata and status |
 | `R/build_subsequent.R` | the 2L and 3L cohorts: window check, lineage checks, attrition |
 | `R/load_inputs.R` | reads `config.csv` into the environment as defaults |
