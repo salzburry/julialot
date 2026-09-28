@@ -83,6 +83,38 @@ melp_out_dir <- function(script_dir) {
   if (nzchar(d)) d else file.path(script_dir, "out")
 }
 
+# The reports read_melp_summary.R writes, and the names it wrote them under
+# before. Every one is cleared before a read starts: a read that stops - on the
+# schema, the password, a provenance check - leaves no report rather than an
+# older one that looks current, and a read that finishes leaves one set of
+# reports, not two.
+MELP_SUMMARY_CSVS <- c("melp_q1_line_duration.csv",
+                       "melp_q1_paired_line_change.csv",
+                       "melp_q1_line_count_change.csv",
+                       "melp_q2_regimens_by_line.csv",
+                       "melp_q3_sct_in_melp_lot.csv")
+MELP_SUMMARY_FORMER_CSVS <- c("melp_ask1_line_duration.csv",
+                              "melp_ask1_paired_line_change.csv",
+                              "melp_ask1_line_count_change.csv",
+                              "melp_ask2_regimens_by_line.csv",
+                              "melp_ask3_sct_in_melp_lot.csv",
+                              "melp_ask2_melp_lots_by_line.csv")
+
+# Removes every report either list names from out_dir, and stops if one stays:
+# a report that cannot be removed is exactly the stale answer this prevents.
+melp_clear_summary <- function(out_dir) {
+  f <- file.path(out_dir, c(MELP_SUMMARY_CSVS, MELP_SUMMARY_FORMER_CSVS))
+  f <- f[file.exists(f)]
+  if (length(f)) suppressWarnings(file.remove(f))
+  left <- f[file.exists(f)]
+  if (length(left))
+    stop("Could not remove the previous melphalan report(s) ",
+         paste(basename(left), collapse = ", "), " from ", out_dir,
+         ". Remove them, or point OUTPUT_DIR somewhere writable, and run again.",
+         call. = FALSE)
+  invisible(basename(f))
+}
+
 melp_cell_plan <- function(cells = MELP_CELLS, prefix_base = "melp_") {
   lapply(cells, function(c_i)
     c(c_i, list(prefix = paste0(prefix_base, c_i$id, "_"))))

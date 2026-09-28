@@ -511,6 +511,73 @@ ok(has(rs, "melp_status_unchanged") && has(rs, "melp_check_code") &&
      has(rs, "melp_read_inputs"),
    "the read carries the package's run-ownership checks")
 
+cat("\n-- a refresh of the summary leaves one set of reports --\n")
+# An output directory holding both generations of report names and one file
+# the reader never wrote. A read that stops must leave neither generation; a
+# read that finishes must leave exactly the reports it writes.
+seed_reports <- function() {
+  d <- tempfile("melp_out"); dir.create(d)
+  for (f in c(MELP_SUMMARY_CSVS, MELP_SUMMARY_FORMER_CSVS, "keep_me.csv"))
+    writeLines("stale", file.path(d, f))
+  d
+}
+reports_left <- function(d) setdiff(list.files(d), "keep_me.csv")
+ok(length(MELP_SUMMARY_CSVS) == 5L && length(MELP_SUMMARY_FORMER_CSVS) == 6L &&
+     "melp_ask2_melp_lots_by_line.csv" %in% MELP_SUMMARY_FORMER_CSVS &&
+     !length(intersect(MELP_SUMMARY_CSVS, MELP_SUMMARY_FORMER_CSVS)),
+   "the cleanup knows the five current report names and all six former ones")
+
+# Failed refreshes, the reader itself in a fresh process: one stopped on the
+# work schema, one on the password. Both stop before any connection.
+run_reader <- function(env) {
+  old <- Sys.getenv(names(env), unset = NA, names = TRUE)
+  on.exit({
+    for (k in names(old))
+      if (is.na(old[[k]])) Sys.unsetenv(k) else do.call(Sys.setenv, as.list(old[k]))
+  }, add = TRUE)
+  do.call(Sys.setenv, as.list(env))
+  out <- suppressWarnings(system2(file.path(R.home("bin"), "Rscript"),
+                                  shQuote(file.path(ROOT, "read_melp_summary.R")),
+                                  stdout = TRUE, stderr = TRUE))
+  list(status = attr(out, "status") %||% 0L, text = paste(out, collapse = "\n"))
+}
+for (case in list(
+  list(env = c(PROJECT_WORK_SCHEMA = "", DOMINO_USER_NAME = "", DATABRICKS_PWD = ""),
+       says = "No work schema", what = "the work schema"),
+  list(env = c(PROJECT_WORK_SCHEMA = "usr00000", DOMINO_USER_NAME = "", DATABRICKS_PWD = ""),
+       says = "DATABRICKS_PWD", what = "the password"))) {
+  d <- seed_reports()
+  r <- run_reader(c(OUTPUT_DIR = d, case$env))
+  ok(!identical(r$status, 0L) && grepl(case$says, r$text, fixed = TRUE) &&
+       !length(reports_left(d)) && file.exists(file.path(d, "keep_me.csv")),
+     paste0("a refresh stopped on ", case$what, " leaves no report of either ",
+            "generation, and nothing it did not write is touched",
+            if (length(reports_left(d))) paste0(" (left: ",
+              paste(reports_left(d), collapse = ", "), ")") else ""))
+  unlink(d, recursive = TRUE)
+}
+
+# A successful refresh: the cleanup the reader runs, then every report the
+# reader writes, read off its own write_out() calls.
+rd <- paste(readLines(file.path(ROOT, "read_melp_summary.R"), warn = FALSE),
+            collapse = "\n")
+written <- sub('.*"([^"]+)"$', "\\1",
+               regmatches(rd, gregexpr('write_out\\([A-Za-z0-9_]+, "[^"]+"', rd))[[1]])
+d <- seed_reports()
+melp_clear_summary(d)
+for (f in written) writeLines("fresh", file.path(d, f))
+ok(setequal(written, MELP_SUMMARY_CSVS) && setequal(reports_left(d), MELP_SUMMARY_CSVS) &&
+     all(vapply(file.path(d, MELP_SUMMARY_CSVS), function(f) identical(readLines(f), "fresh"),
+                logical(1))) && file.exists(file.path(d, "keep_me.csv")),
+   "a refresh that finishes leaves the five current reports, all fresh, and none under a former name")
+unlink(d, recursive = TRUE)
+clear_at  <- regexpr("melp_clear_summary(out_dir)", rd, fixed = TRUE)
+ok(clear_at > 0 && clear_at < regexpr("No work schema", rd, fixed = TRUE) &&
+     clear_at < regexpr("stop_if_blank(cfg$pwd", rd, fixed = TRUE) &&
+     clear_at < regexpr("DBI::dbConnect", rd, fixed = TRUE) &&
+     has(rd, "stopifnot(name %in% MELP_SUMMARY_CSVS)"),
+   "the reader clears before its first check, and writes only names the cleanup knows")
+
 cat("\n-- and both are RUN, not just read --\n")
 # Everything above inspects SQL as text, which cannot tell that a join lost a
 # bound, that a CASE can never be true, or that a count measures something

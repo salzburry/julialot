@@ -100,13 +100,13 @@ only when a switch asks for them. It is **generated**, not written by hand:
 `write_study_contract()` in `variables/R/contract.R` derives it from the
 `MODULES`, `SUPPRESSION_SPEC` and `OPTIONAL_FEATURES` that drive the run
 itself. It is shipped here because a snapshot is filled where that package is
-not installed. Regenerate it whenever the study registry gains a table,
-overwriting the one file in `TFLS/contract/`:
+not installed. Regenerate it whenever the study registry gains a table, to the
+one name the reader opens (`TFLS_CONTRACT_FILE` in `R/scope.R`):
 
 ```r
 source("variables/R/registry.R")
 source("variables/R/contract.R")
-write_study_contract(Sys.glob("TFLS/contract/*.csv"))
+write_study_contract("TFLS/contract/study223926_contract.csv")
 ```
 
 `tests/test_tfls.R` regenerates it and compares line for line whenever the
