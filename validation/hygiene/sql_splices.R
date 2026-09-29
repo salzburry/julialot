@@ -89,7 +89,15 @@ FRAGMENT <- c(
   # it takes the report.
   foldin_lotn_ctes        = "opens with its own newline",
   foldin_base_meds        = "returns a table name",
-  map_restart_sql             = "opens with its own newline, spliced after an open paren")
+  map_restart_sql             = "opens with its own newline, spliced after an open paren",
+  # The MDV port's staged source selects (Sep 16/mdv_sep29, R/mdv_source.R),
+  # spliced after an open paren wherever a step reads MDV.
+  mdv_dx_select           = "opens with its own newline",
+  mdv_act_select          = "opens with its own newline",
+  mdv_drug_select         = "opens with its own newline",
+  mdv_patient_select      = "opens with its own newline",
+  mdv_ff1_select          = "opens with its own newline",
+  read_as                 = "a one-line CASE expression, spliced last in a GROUP BY")
 
 files <- Filter(function(f) !grepl("/tests?/", f),
                 list.files(ROOT, pattern = "\\.R$", recursive = TRUE, full.names = TRUE))

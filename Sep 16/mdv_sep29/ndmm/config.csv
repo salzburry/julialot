@@ -1,0 +1,51 @@
+name,value,description
+DATABRICKS_DSN,RWDE,ODBC DSN
+DATABRICKS_CATALOG,hive_metastore,Catalog for all reads and writes
+MDV_SCHEMA,clnprw_mdv_all_use,MDV schema (the one the OC business rules read)
+USE_QUARTERLY_TABLES,TRUE,Read each MDV table as t_<name>_<vintage>
+MDV_VINTAGE,2026q2,The MDV extract's quarterly suffix; blank derives it from STUDY_END
+STUDY_START,2018-01-01,"Study period start. Part of CONTRACT, so changing it needs NDMM_CONTRACT_OVERRIDE=TRUE"
+STUDY_END,2026-03-31,Study period end. The same window as the Optum cohort; the MDV extract (2026q2) reaches past it
+LOT1_FROM,2019-01-01,"1L eligible-treatment period opens here. Part of CONTRACT, so changing it needs NDMM_CONTRACT_OVERRIDE=TRUE"
+PRE_LOT1_DAYS,365,Lookback and baseline window before the 1L index date
+FU_CE_DAYS,0,Days after index the patient must still be observed at the hospital; 0 is the index date itself
+OUTPATIENT_WINDOW_MONTHS,3,Two outpatient MM diagnosis months at most this many months apart confirm a diagnosis (the Optum rule's 90 days)
+OTHER_MALIG_WINDOW_MONTHS,1,Two outpatient months for one cancer at most this many months apart confirm it (the Optum rule's 30 days)
+MIN_AGE,18,Minimum age in the MM-diagnosis year
+CODELIST_DIR,/mnt/code/codelist_mdv,Where the MDV code lists live (MDV vocabulary; not the Optum lists)
+MDV_TBL_DISEASE,diseasedata,MDV diagnosis table (base name)
+MDV_TBL_PATIENT,patientdata,MDV patient table (base name)
+MDV_TBL_FF1,ff1data,MDV DPC Form 1 episode table (base name)
+MDV_TBL_DRUG,m_drug,MDV drug master (base name)
+MDV_TBL_ACT,actdata,MDV act table (base name)
+MDV_COL_PATIENTID,patientid,Patient key in every table
+MDV_COL_DATAMONTH,datamonth,Claim month on the diagnosis table
+MDV_COL_NYUGAIKBN,nyugaikbn,Care setting on the diagnosis table
+MDV_COL_DISEASECODE,diseasecode,MDV disease code
+MDV_COL_ICD10,,ICD-10 code on the diagnosis table (blank = the delivery has none; code lists must then use DISEASECODE)
+MDV_COL_UTAGAIFLG,utagaiflg,Suspected-diagnosis flag
+MDV_COL_CANCERFLG,cancerflg,Cancer-diagnosis flag
+MDV_COL_FROMDATE,fromdate,Day-level diagnosis date compared with the FF1 episode
+MDV_COL_SEX,sex,Sex on the patient table
+MDV_COL_BIRTH,birthyearmonth,Birth year / year-month / date on the patient table (CONFIRM the name)
+MDV_COL_FF1STARTDATE,ff1startdate,FF1 admission date
+MDV_COL_FF1ENDDATE,ff1enddate,FF1 discharge date
+MDV_COL_CANCERFIRSTFLG,cancerfirstflg,FF1 first-occurrence cancer flag
+MDV_COL_CHEMOTHERAPYFLG,chemotherapyflg,FF1 chemotherapy flag
+MDV_COL_FF1_OUTCOME,,FF1 discharge outcome (blank = death is not observed; CONFIRM the name)
+MDV_COL_RECEIPTCODE,receiptcode,Receipt code on the drug master and the act table
+MDV_COL_RECEIPTNAME_ENG,receiptname_eng,English drug name on the drug master
+MDV_COL_ACTDATE,actdate,Date of an act
+MDV_COL_ACT_NYUGAIKBN,nyugaikbn,Care setting on the act table (blank = not carried)
+MDV_COL_ACT_DAYS,,Days supplied on the act table (blank = not carried; LOT imputes)
+MDV_INPATIENT,2,nyugaikbn value for inpatient
+MDV_OUTPATIENT,1,nyugaikbn value for outpatient
+MDV_CONFIRMED,0,utagaiflg value for a confirmed diagnosis
+MDV_CANCER,1,cancerflg value for a cancer diagnosis
+MDV_FIRSTCANCER,0,cancerfirstflg value for a first occurrence
+MDV_NO_CHEMO,0,chemotherapyflg value for no chemotherapy
+MDV_SEX_MALE,1,sex value for male
+MDV_SEX_FEMALE,2,sex value for female
+MDV_DEATH_OUTCOMES,6|7,Discharge outcome values that are a death
+NDMM_MDV_IP_RULE,none,"What makes an inpatient MM diagnosis: none (nyugaikbn alone - the Optum rule), ff1 (and inside an FF1 episode), ff1_chemo (and that episode is a first cancer with chemotherapy - the OC rule)"
+NDMM_MDV_REQUIRE_CANCERFLG,TRUE,The MM and other-cancer diagnoses must carry cancerflg (the OC base-population rule)
