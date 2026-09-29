@@ -201,6 +201,15 @@ phase_sct_extract <- function(con, ctx) {
 # SCT_CLAIMS_RAW in, TX_AUTO_DATES and TX_ALLO_CART_DATES out.
 phase_sct_cluster <- function(con, ctx) {
 
+  # SCT detection rules:
+  #   - AUTO: 14-day window grouping + 60-day gap + 180-day tandem
+  #   - ALLO/CART: simple sequential dates
+  #   - ALLO/CART immediately end LOT1
+  #   - Single AUTO allowed; tandem pair allowed; excess AUTO ends LOT1
+  #
+  # Maintenance is a descriptive flag and nothing more - contains_mtx_reg,
+  # derived in S16b. There is no maintenance-period view.
+
   # The SCT CTEs carry an SRC column so a row can be traced back. Dedup drops
   # it. To see what each source contributed, query the combined CTE before
   # dedup.

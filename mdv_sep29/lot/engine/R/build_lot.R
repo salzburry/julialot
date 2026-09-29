@@ -1,7 +1,7 @@
 # Runner for the LOT build on MDV. Standalone: one module, pointed at a cohort
 # table.
 #
-# This is the Sep 16 Optum engine with its extraction half rebuilt for MDV
+# This is the Optum engine with its extraction half rebuilt for MDV
 # (../../MDV_RULES.md): the code lists, the drug extraction (03_mma_map.R,
 # phase_mma_extract) and the transplant extraction (05_sct.R,
 # phase_sct_extract). The line rules downstream of MAP_STACKED and the SCT
@@ -28,7 +28,7 @@ CONTRACT <- list(
   # On MDV this censors at the last record: MDV has no enrollment, and a
   # patient who stops attending cannot be told from one who stopped treatment.
   # The Optum contract's FALSE would read every loss to follow-up as a
-  # discontinuation. MDV_RULES.md, "Observation".
+  # discontinuation. MDV_RULES.md section 4, "observation".
   censor_at_disenrollment     = TRUE,
   # The melphalan rule this study is defined as - LOT_RULES.md 4.7,
   # R/melp_rule.R. Any other value, 'off' included, builds a different

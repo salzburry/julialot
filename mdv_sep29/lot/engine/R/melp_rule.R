@@ -2,7 +2,7 @@
 # build_lot.R. One rule, applied by every study build; APPLY_MELP_RULE turns it
 # off and nothing else. A rule-off build is a different algorithm, so it needs
 # LOT_CONTRACT_OVERRIDE and is recorded as a deviation - it exists so the rule's
-# effect can be measured, which lot/melphalan/ does.
+# effect can be measured, which the Optum build's melphalan package does.
 #
 # The rule lives in the engine because it needs each line's induction window,
 # and that exists only while the line is being built. It changes one thing:
@@ -630,8 +630,8 @@ melp_prior_regimen_exempt <- function(cfg, alias = "ms") {
 # short courses outside the line's own induction window, minus the confirmed
 # ones. A confirmed course opens a line, so it is a boundary like any other
 # agent and has to break the chain; only a suppressed course refuses a
-# boundary. R03, R04, R07 and R11 in lot/melphalan/tests/exec_rule.R are the
-# courses that must not be in the set.
+# boundary. The Optum build's melphalan package plants the courses that must
+# not be in the set (its cases R03, R04, R07 and R11).
 #
 # A course inside induction is in the regimen and the scan already skips it. A
 # course longer than the cap is left to the engine untouched (4.7), so it
@@ -650,8 +650,8 @@ melp_short_course_ctes <- function(cfg, verdict) {
   # INSIDE = 0 would put those courses in and stop them interrupting, which is
   # arguably what 4.7 wants. No patient in the validation set tells the two
   # apart, so it stays a rule question for the study team rather than a silent
-  # edit. R14 and R15 in lot/melphalan/tests/exec_rule.R are the shape that
-  # does tell them apart, and they pin the reading that is built.
+  # edit. The Optum build's melphalan package plants the shape that does tell
+  # them apart (its cases R14 and R15), and pins the reading that is built.
   paste0("\n", glue("
     melp_no_break AS (
       SELECT DISTINCT PATID, DOSE_DT AS MAP_START_DT

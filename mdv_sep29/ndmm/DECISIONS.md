@@ -9,8 +9,8 @@ Statuses. **Signed off**: settled. **Open**: the code applies one reading and
 the study team still has to confirm it. **Measured**: nothing to decide until
 the first run's number is read. **Not built**: the code does not do it.
 
-This is the Sep 16 register (`../../Sep 16/ndmm/DECISIONS.md`) with one section added
-at the top, **MDV**, for the decisions the port makes. Sections 1 to 12 are the
+This is the Optum cohort build's register, carried over whole, with one
+section added at the top, **MDV**, for the decisions the port makes. Sections 1 to 12 are the
 Optum decisions, carried over because the rules are the same study's. "Signed
 off" there means signed off **for Optum**; the whole MDV build is a deviation
 until the study team signs the port off (`../MDV_RULES.md`). Four sections
@@ -168,7 +168,7 @@ index.
 Why: the code list is the study's definition of MM therapy, and there is no
 separate list of first-line regimens; inventing one would shrink the cohort by
 a rule nobody could reproduce. I3 names the agents restricted to later lines,
-panobinostat and elotuzumab (`variables/IE_CRITERIA.md` "I3. Eligible 1L
+panobinostat and elotuzumab (protocol inclusion criterion I3, "Eligible 1L
 treatment"), and those are barred by name (`README.md` "Barring agents from
 the 1L index"). Every entry must match the code list or the build stops, and
 the study package refuses a cohort that did not bar the agents its
@@ -387,8 +387,9 @@ Rule: every "months" window is a fixed day count. Twelve months of baseline is
 365 days, `[index - 365, index - 1]`, at 1L, 2L and 3L; three months of 2L/3L
 follow-up is 90 days. `PRE_LOT1_DAYS = 365` is pinned in `CONTRACT`;
 `SUBSEQ_PRE_DAYS = 365` and `SUBSEQ_FU_CE_DAYS = 90` by
-`subseq_check_windows()` in `R/build_subsequent.R`, and the values used are on
-every 2L/3L table as `CE_PRE_DAYS` and `CE_FU_DAYS`.
+`subseq_check_windows()` in the Optum build's 2L/3L cohort builder, which is
+not part of this folder, and the values used are on every 2L/3L table as
+`CE_PRE_DAYS` and `CE_FU_DAYS`.
 
 Why: calendar months would make the window depend on the index month - 90 to
 92 days for three months, 365 or 366 across a leap day. 90 days is the shortest

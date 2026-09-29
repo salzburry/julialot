@@ -1,6 +1,6 @@
-# The Sep 16 NDMM cohort and lines of therapy, on MDV
+# The NDMM cohort and lines of therapy, on MDV
 
-The rules the Sep 16 build applies to Optum, translated to MDV (Medical Data
+The rules the Optum build applies, translated to MDV (Medical Data
 Vision, Japanese hospital-based claims) one at a time. Each row says what the
 Optum rule is, what this build does on MDV instead, and why. The code is in
 `ndmm/` (the cohort) and `lot/engine/` (the lines); `README.md` says how to run
@@ -8,15 +8,16 @@ it.
 
 Three sources decide the MDV form of a rule:
 
-- **the Sep 16 Optum rule** (`../Sep 16/ndmm/README.md`, `../Sep 16/ndmm/DECISIONS.md`,
-  `../Sep 16/lot/LOT_RULES.md`). This is the business rule, and it is the default.
+- **the Optum rule**, carried in this folder: the cohort's decision register
+  (`ndmm/DECISIONS.md`, sections 1 to 12) and the line rules
+  (`lot/LOT_RULES.md`). This is the business rule, and it is the default.
 - **the MDV ovarian cancer business rules** a colleague wrote against this
   warehouse (`reference/MDV_Ovarian_Cancer_Business_Rules.md`, "the OC
   rules"). They give MDV's table and column names and this team's conventions
   for reading them. Where they add a condition that is about ovarian cancer
   rather than about MDV, the condition is offered here as a setting and its
   effect is counted on every run. It is not applied by default.
-- **`../Sep 16/lot/PORTING.md`**, "MDV specifically", which names the three places MDV
+- **`lot/PORTING.md`**, "MDV specifically", which names the three places MDV
   meets the LOT engine: drug vocabulary, observation, and day supply.
 
 Anything none of the three settles is marked **(confirm)**. It has a default
@@ -80,7 +81,7 @@ family.
 
 Same nine criteria, same order, same attrition table (`NDMM_ATTRITION`).
 
-| # | Optum (Sep 16) | MDV (this build) | status |
+| # | Optum | MDV (this build) | status |
 |---|---|---|---|
 | 1 | **MM diagnosis.** One inpatient claim with a strict code (C90.0x), or two outpatient claims on different days within 90 days. Any position, inside the study period. Date: the earliest qualifying claim. | A diagnosis record whose `diseasecode` (or ICD-10) is on `mm_dx.csv`. It must be **confirmed** (`utagaiflg = 0`), and by default must be flagged **cancer** (`cancerflg = 1`). It is dated to the **first day of its claim month**. One **inpatient** record (`nyugaikbn = 2`) with a strict C90.0x code, or two **outpatient** records (`nyugaikbn = 1`) in **different claim months at most 3 months apart**. The date is the earlier month. | adapted: the inpatient reading and `cancerflg` are open (section 5) |
 | 2 | **Adult.** `year(diagnosis) - YRDOB >= 18`, tested at the earliest date. | Unchanged. YRDOB is the first four digits of the birth column. | birth column (confirm) |
@@ -137,7 +138,7 @@ pays for an investigational drug, so it does not reach the claim at all.
 
 ## 4. The lines of therapy
 
-**Unchanged:** every line rule in `../Sep 16/lot/LOT_RULES.md`. That covers the MAP
+**Unchanged:** every line rule in `lot/LOT_RULES.md`. That covers the MAP
 episode state machine, the induction windows, the run-out chain, the end
 cascade, the next-line triggers, the SCT clustering and tandem rule, CAR-T,
 the melphalan and fold-in rules, and the line criteria (belantamab in any
@@ -214,8 +215,8 @@ named here so it is decided on purpose.
 9. **Japanese practice.** PORTING.md: "the regimen vocabulary, the transplant
    rate and the relevance of the melphalan rule (4.7) should be re-examined
    with a clinician." The rules are the Optum study's, unchanged.
-10. **The 2L and 3L cohorts** (`../Sep 16/ndmm/build_subsequent_cohorts.R`) are not
-    ported. On MDV their enrolment windows would become lookback and
+10. **The 2L and 3L cohorts** are not ported. The Optum build derives them from
+    the lines. On MDV their enrolment windows would become lookback and
     follow-up windows of the same kind as criteria 4 and 5.
 
 **Before the first run, confirm against the MDV data dictionary:** the
@@ -260,16 +261,21 @@ one rule.
 |---|---|---|
 | `ndmm/tests/test_mdv_build.R` | the whole cohort build, unchanged, against the synthetic tables. It checks every attrition count, the ten cohort members and their index and diagnosis dates, death, `ENDDATE_CE`, criterion 1 under each reading, the resolved code list, the belantamab list, the trial flag, the metadata; then the OC inpatient rule; and that a wrong value code and a wrong column name each stop the run | 57 / 57 |
 | `lot/engine/tests/test_mdv_extract.R` | the cohort build, then the LOT engine's preflight, code lists, drug extraction and transplant extraction on that cohort. It checks INJ/ORAL supply, inpatient days, the default without a days column, the name-pattern drugs, CAR-T by name, and the fatal route check | 23 / 23 |
-| `ndmm/tests/test_runner.R` | the Sep 16 cohort runner suite, carried over, with its Optum-only tests replaced by MDV ones | 407 / 407 |
-| `lot/engine/tests/test_runner.R`, `test_line_criteria.R` | the Sep 16 LOT runner and criteria suites, the same way | 532 / 532, 59 / 59 |
+| `ndmm/tests/test_runner.R` | the Optum cohort runner suite, carried over, with its Optum-only tests replaced by MDV ones | 407 / 407 |
+| `lot/engine/tests/test_runner.R`, `test_line_criteria.R` | the Optum LOT runner and criteria suites, the same way | 532 / 532, 59 / 59 |
+| `lot/validation/tests/test_vignettes.R` | the rule vignettes, carried over unchanged: every setting a case derives from exists in the MDV engine's config, the boundary pairs straddle it, every source line a case quotes is still in this folder's engine, and `lot/LOT_RULES.md` and the catalogue cite each other | 38 / 38 |
 
-**Not run here:** the LOT line assembly on MDV-shaped data. The MAP state
-machine and SCT clustering use Spark higher-order functions (`aggregate` with
-a finish lambda) that DuckDB cannot run through sqlglot. That code is
-unchanged from Sep 16, so its behaviour is what the Sep 16 suites establish.
-Its first run on MDV output is the warehouse run.
+`tests/run_all.R` runs all six.
 
-Before any number is used, PORTING.md's last section applies to this port too.
+**Not executed by any suite here:** the LOT line assembly, from the MAP state
+machine and the SCT clustering onward. Both use Spark higher-order functions
+(`aggregate` with a finish lambda) that DuckDB cannot run through sqlglot. That
+code is the Optum engine's, unchanged (`lot/README.md` lists the files that
+did change); the suites here check its settings, its declared outputs and the
+rules it cites, not the rows it returns. Its first execution on MDV output is
+the first warehouse run.
+
+Before any number is used, `lot/PORTING.md`'s last section applies to this port too.
 It needs its own planted cases on real data, its own face-validity bands, and
 a reconciliation against published Japanese line-of-therapy distributions.
 Until someone signs it off, this build is a deviation from the study.

@@ -8,9 +8,9 @@
 # phase_sct_extract(), which writes SCT_CLAIMS_RAW. The rows are checked
 # against what the planted patients (../../tests/fixture_mdv.R) must give.
 #
-# It stops there. The MAP state machine and everything after it are the Sep 16
-# engine's, unchanged, and use Spark higher-order functions DuckDB cannot run;
-# the Sep 16 suites cover them. See ../../MDV_RULES.md, "What was tested".
+# It stops there. The MAP state machine and everything after it are the Optum
+# engine's, unchanged, and use Spark higher-order functions DuckDB cannot run,
+# so no suite here executes them. See ../../MDV_RULES.md, "What was tested".
 #
 #   Rscript "lot/engine/tests/test_mdv_extract.R"
 

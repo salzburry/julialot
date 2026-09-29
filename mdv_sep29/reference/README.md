@@ -21,9 +21,9 @@ searched for MDV material:
 
 **Nothing was found.** There is no data dictionary, no table or column
 names, no code list, no MDV-reading code, and no MDV-to-OMOP mapping. The only
-MDV text was copies of `../../Sep 16/lot/PORTING.md` (the same file, and an earlier
-draft of it) inside an uploaded zip in omop-temp. Nothing was copied here,
-because PORTING.md is already in Sep 16.
+MDV text was copies of the LOT porting guide (the same file as
+`../lot/PORTING.md`, and an earlier draft of it) inside an uploaded zip in
+omop-temp. Nothing was copied from there: the guide is already in this folder.
 
 So the columns `../MDV_RULES.md` marks **(confirm)** stay unconfirmed until
 someone checks them against the MDV data dictionary itself. They are the birth

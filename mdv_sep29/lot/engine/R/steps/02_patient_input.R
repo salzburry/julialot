@@ -4,11 +4,12 @@
 phase_patient_input <- function(con) {
   # STEP 1: Load Part 1 cohort
   # OBS_END_DT = observation end for all LOT/MAP logic.
-  # Primary analysis (cfg$censor_at_disenrollment = FALSE):
+  # cfg$censor_at_disenrollment = TRUE, pinned on MDV:
+  #   OBS_END_DT = coalesce(ENDDATE_CE, ENDDATE). On MDV, ENDDATE_CE is the last
+  #   MDV record, so a patient is observed until they stop appearing.
+  #   MDV has no enrollment (LOT_RULES.md 7.6; MDV_RULES.md section 4).
+  # cfg$censor_at_disenrollment = FALSE, a contract deviation on MDV:
   #   OBS_END_DT = ENDDATE = min(death_dt, study_end).
-  #   Disenrollment is not a censoring criterion.
-  # Sensitivity analysis (cfg$censor_at_disenrollment = TRUE):
-  #   OBS_END_DT = coalesce(ENDDATE_CE, ENDDATE), so disenrollment also caps obs.
   # ENDDATE_CE is preserved as a column either way for ad-hoc analyses.
   obs_end_dt_expr <- if (isTRUE(cfg$censor_at_disenrollment)) {
     "coalesce(cast(ENDDATE_CE AS date), cast(ENDDATE AS date))"
@@ -16,8 +17,8 @@ phase_patient_input <- function(con) {
     "cast(ENDDATE AS date)"
   }
   log_msg("  OBS_END_DT mode:    ",
-          if (isTRUE(cfg$censor_at_disenrollment)) "SENSITIVITY (ENDDATE_CE)"
-          else "PRIMARY (ENDDATE, disenrollment ignored)")
+          if (isTRUE(cfg$censor_at_disenrollment)) "ENDDATE_CE (the last MDV record)"
+          else "ENDDATE (to study end or death; a contract deviation on MDV)")
   run_step(con, "S03_patient_input", glue("
     CREATE OR REPLACE TEMPORARY VIEW lot_patient_input AS
     SELECT

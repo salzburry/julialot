@@ -3,10 +3,8 @@
 #
 #   Rscript tests/run_all.R          # from this folder, or by path from anywhere
 #
-# The repository's merge gate (validation/run_gate.R) gates Sep 16, and this
-# folder is not part of that delivery, so nothing else runs these. The list is
-# written out rather than discovered: a suite that disappears is a failure here,
-# not a smaller green.
+# The list is written out rather than discovered: a suite that disappears is a
+# failure here, not a smaller green.
 #
 # A suite that skips (python3 without duckdb and sqlglot) proved nothing, and
 # counts against the run.
@@ -24,7 +22,8 @@ SUITES <- c(
   "ndmm/tests/test_mdv_build.R",
   "lot/engine/tests/test_runner.R",
   "lot/engine/tests/test_line_criteria.R",
-  "lot/engine/tests/test_mdv_extract.R")
+  "lot/engine/tests/test_mdv_extract.R",
+  "lot/validation/tests/test_vignettes.R")
 
 bad <- 0L; total <- 0L
 for (s in SUITES) {

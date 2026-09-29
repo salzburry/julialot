@@ -4,8 +4,9 @@
 # half: it reads the act table and writes MMA_MED_PROCESSED, one row per drug,
 # day and claim type. phase_map() is the Optum build's MAP state machine,
 # unchanged: it reads only MMA_MED_PROCESSED and the cohort, and writes
-# MAP_STACKED. The suite runs the first half against synthetic MDV; the second
-# is the Sep 16 engine's, covered by that engine's own suites.
+# MAP_STACKED. The suite runs the first half against synthetic MDV. No suite
+# here executes the second: it uses Spark aggregate with a finish lambda, which
+# DuckDB cannot run (../../../MDV_RULES.md, "What was tested").
 
 phase_mma_map <- function(con, ctx) {
   phase_mma_extract(con, ctx)

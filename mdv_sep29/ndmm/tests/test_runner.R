@@ -201,8 +201,8 @@ local({
      "...while a contract build clears them, so a second call cannot inherit them")
 })
 
-# CONTRACT_SETTINGS is what variables/ reads back to check the study's window
-# against the cohort's. On an overridden run it has to say what the run USED;
+# CONTRACT_SETTINGS is what a study package reads back to check the study's
+# window against the cohort's. On an overridden run it has to say what the run USED;
 # saying what CONTRACT pins would have the downstream check compare against a
 # value no query ever saw.
 local({

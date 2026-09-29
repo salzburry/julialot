@@ -1,7 +1,7 @@
 # Runner for the NDMM (1L newly-diagnosed) cohort, built from MDV. Standalone:
 # one module, pointed at a cohort prefix.
 #
-# This is the Sep 16 Optum build with its extraction rewritten for MDV (see
+# This is the Optum cohort build with its extraction rewritten for MDV (see
 # ../MDV_RULES.md). The runner's machinery - the contract, the checks before
 # anything is written, the attrition, the status and metadata tables - is the
 # Optum build's, so a reader of one can read the other.
@@ -224,7 +224,7 @@ check_settings <- function() {
     x <- trimws(Sys.getenv(v, unset = ""))
     if (nzchar(x))
       bad <- c(bad, paste0(v, "='", x, "' is an Optum setting and this build ",
-                           "reads MDV; see mdv_sep29/ndmm/config.csv for the ",
+                           "reads MDV; see ndmm/config.csv for the ",
                            "MDV names"))
   }
   # The MDV table names, column names and value codes, which go straight
@@ -273,8 +273,9 @@ pin_prefix <- function(cfg, prefix) {
 #
 # A deviating run cannot pass for the study's: the deviations go into
 # NDMM_BUILD_STATUS.FINDINGS and NDMM_RUN_METADATA.FINDINGS, CONTRACT_SETTINGS
-# records what the run used rather than what CONTRACT pins, and variables/
-# compares its own window against that column and refuses a disagreement.
+# records what the run used rather than what CONTRACT pins, and a study
+# package reading the cohort compares its own window against that column and
+# refuses a disagreement.
 #
 # Same shape and the same bargain as LOT_CONTRACT_OVERRIDE in
 # lot/engine/R/build_lot.R. Unset, which is every production run, nothing here
@@ -707,9 +708,8 @@ contract_settings <- function(cfg = NULL) {
   k <- sort(names(CONTRACT), method = "radix")
   # The RUN's value, falling back to the contract's. The two are the same on a
   # contract build; on an overridden one this has to say what the cohort was
-  # actually built from, because variables/ reads this very column back and
-  # refuses a study whose window disagrees with the cohort's
-  # (BINDING_UPSTREAM_SETTINGS). Recording CONTRACT here would have had it
+  # actually built from, because a study package reads this very column back
+  # and refuses a study whose window disagrees with the cohort's. Recording CONTRACT here would have had it
   # compare against a value the run did not use.
   val <- function(key) {
     v <- if (!is.null(cfg) && !is.null(cfg[[key]])) cfg[[key]] else CONTRACT[[key]]

@@ -1,14 +1,15 @@
 # mdv_sep29: the NDMM cohort and lines of therapy on MDV
 
-The Sep 16 study code for the NDMM cohort (`../Sep 16/ndmm/`) and the lines-of-therapy
-engine (`../Sep 16/lot/engine/`), ported from Optum Clinformatics to **MDV** (Medical
-Data Vision): `clnprw_mdv_all_use`, the 2026q2 extract, on the same Databricks
-warehouse.
+The Optum build's NDMM cohort and lines-of-therapy engine, ported from Optum
+Clinformatics to **MDV** (Medical Data Vision): `clnprw_mdv_all_use`, the
+2026q2 extract, on the same Databricks warehouse.
 
-**Sep 16 is the only source.** The NDMM cohort definition is Sep 16's
-(`../Sep 16/ndmm/`) and the LOT rules are Sep 16's (`../Sep 16/lot/`). Nothing
-is taken from the earlier deliveries (Jul 28, Aug 14, Sep 10 and before). This
-folder sits beside Sep 16, not inside it, and Sep 16 is not changed.
+**Self-contained.** Everything the port needs is in this folder: the Optum
+rules it translates, carried in full (the cohort's decision register,
+`ndmm/DECISIONS.md`; the line rules, `lot/LOT_RULES.md`), the porting guide it
+was built to (`lot/PORTING.md`), the code, the code-list shapes, the test
+suites and the stand-in warehouse they run against. Nothing here reads, sources
+or points at a file outside it, so it can be moved or deployed on its own.
 
 **`MDV_RULES.md` is the document to read.** It sets each Optum rule beside its
 MDV form, gives where each MDV choice came from, and lists what is still open.
@@ -19,13 +20,13 @@ MDV form, gives where each MDV choice came from, and lists what is still open.
 |---|---|
 | `MDV_RULES.md` | the rules, Optum and MDV side by side; open decisions; what was tested |
 | `ndmm/` | the 1L NDMM cohort on MDV. Writes `<prefix>NDMM_COHORT`, the table the LOT engine reads. `ndmm/README.md` |
-| `lot/engine/` | the LOT engine on MDV: the Sep 16 line rules, with the MDV extraction. `lot/README.md` |
+| `lot/` | the LOT engine on MDV (`lot/engine/`): the Optum line rules, with the MDV extraction; and the rule vignettes (`lot/validation/`). `lot/README.md`, `lot/CONTENTS.md` |
 | `codelists/` | the MDV code lists' shapes (headers only) and how to author them. The lists themselves live on production, like the Optum ones |
 | `reference/` | the colleague's MDV ovarian cancer business rules, transcribed; the search of this account's other repositories for MDV documentation |
 | `tests/` | the DuckDB stand-in warehouse (`duck_bridge.py`), the synthetic MDV patients (`fixture_mdv.R`) the suites run against, and `run_all.R`, which runs every suite |
 
 Rules, not code, are the port's substance. The machinery around them is the
-Sep 16 build's and is kept as it was: the contract, the checks made before
+Optum build's and is kept as it was: the contract, the checks made before
 anything is written, the attrition, the status and metadata tables, the run
 log. Someone who knows the Optum build can read this one.
 
@@ -48,8 +49,7 @@ log. Someone who knows the Optum build can read this one.
 
 ## Running it
 
-The same two stages as Sep 16, with one difference: the cohort and the lines
-now run over MDV.
+Two stages, in this order: the cohort, then the lines over it.
 
 ```bash
 SCHEMA=$DOMINO_USER_NAME
@@ -65,11 +65,27 @@ CODELIST_DIR=$CL DATABRICKS_PWD="$DATABRICKS_PWD" PROJECT_WORK_SCHEMA=$SCHEMA \
 ```
 
 Give MDV runs a prefix of their own (`mdv_`) so they never sit on an Optum
-prefix. The settings, the run log, the "one run per prefix" rule and the
-override switches all work as in Sep 16 (`../Sep 16/README.md`).
+prefix. Each stage takes one run per prefix at a time and refuses a second
+while the first is `started` (`ndmm/README.md`, `lot/CONTENTS.md`).
 
-**Sensitivity builds.** PORTING.md asks for two or three day-supply values
-before one is chosen. Run each under its own prefix, recorded as a deviation:
+**Settings** come from each stage's `config.csv` (`name,value,description`)
+and the environment, which wins. `DATABRICKS_PWD` is read from the environment
+only. Both stages connect over the ODBC DSN in `DATABRICKS_DSN` (default
+`RWDE`), read and write in `DATABRICKS_CATALOG` (default `hive_metastore`), and
+write to `PROJECT_WORK_SCHEMA`, or the Domino user's own schema
+(`DOMINO_USER_NAME`) where it is unset.
+
+**The run log.** Each stage, started from its `build.R`, writes one: every log
+line, the QC tables the run prints, its warnings, and the `ERROR:` line it
+stopped on. It goes to `PIPELINE_LOG_FILE` if set, otherwise to
+`pipeline_run_<time>_<pid>.log` under `OUTPUT_DIR` (default
+`/mnt/artifacts/results`). To keep one file across both stages, `export
+PIPELINE_LOG_FILE`; it names a file rather than a rule, so it is the one
+variable safe to export.
+
+**Sensitivity builds.** `lot/PORTING.md` asks for two or three day-supply
+values before one is chosen. Run each under its own prefix, recorded as a
+deviation:
 
 ```bash
 MEDICAL_DAY_SUPPLY=21 LOT_CONTRACT_OVERRIDE=TRUE ... Rscript lot/engine/build.R mdv_NDMM_COHORT mdvds21_
@@ -78,34 +94,31 @@ MEDICAL_DAY_SUPPLY=21 LOT_CONTRACT_OVERRIDE=TRUE ... Rscript lot/engine/build.R 
 ## Checking it without a warehouse
 
 ```bash
-Rscript tests/run_all.R                               # all five, one exit status
+Rscript tests/run_all.R                                 # all six, one exit status
 ```
 
 or one at a time:
 
 ```bash
-(cd ndmm       && Rscript tests/test_runner.R)       # the runner, the checks, the SQL shapes
-(cd ndmm       && Rscript tests/test_mdv_build.R)    # the whole cohort build on synthetic MDV
-(cd lot/engine && Rscript tests/test_runner.R)
-(cd lot/engine && Rscript tests/test_line_criteria.R)
-(cd lot/engine && Rscript tests/test_mdv_extract.R)  # cohort, then LOT's MDV extraction
+(cd ndmm           && Rscript tests/test_runner.R)       # the runner, the checks, the SQL shapes
+(cd ndmm           && Rscript tests/test_mdv_build.R)    # the whole cohort build on synthetic MDV
+(cd lot/engine     && Rscript tests/test_runner.R)
+(cd lot/engine     && Rscript tests/test_line_criteria.R)
+(cd lot/engine     && Rscript tests/test_mdv_extract.R)  # cohort, then LOT's MDV extraction
+(cd lot/validation && Rscript tests/test_vignettes.R)    # the rules, the vignettes and the engine agree
 ```
 
 They need base R with `glue`. The two MDV suites also need `python3` with
 `duckdb` and `sqlglot`, and each stops with a counted skip if those are
-missing. All five pass: 407, 57, 532, 59, 23. `MDV_RULES.md`, "What was
-tested", says what they cover and what they do not.
-
-The repository's merge gate (`../validation/run_gate.R`) gates Sep 16. This
-folder is not part of that delivery, so `tests/run_all.R` is what checks it.
+missing. `MDV_RULES.md`, "What was tested", gives each suite's count and says
+what they cover and what they do not.
 
 ## Not ported
 
-- **The 2L and 3L cohorts** (`../Sep 16/ndmm/build_subsequent_cohorts.R`).
-- **The study package, table shells and dashboard** (`../Sep 16/variables/`,
-  `../Sep 16/TFLS/`, `../Sep 16/dashboard/`). They read `S_*` tables built from the cohort
-  and the lines, and are written against Optum's variables: HCRU, comorbidity
-  and secondary malignancy by Optum codes.
-- **The LOT QC, melphalan and vignette packages** beside `../Sep 16/lot/engine/`.
-  They read LOT outputs and would run over this engine's tables. They are left
-  in Sep 16 until the MDV lines exist.
+- **The 2L and 3L cohorts.** The Optum build derives them from the lines, after
+  the LOT build; this folder builds the 1L cohort only.
+- **The study package, table shells and dashboard.** They read `S_*` tables
+  built from the cohort and the lines, and are written against Optum's
+  variables: HCRU, comorbidity and secondary malignancy by Optum codes.
+- **The LOT QC and melphalan packages.** They read LOT outputs and would run
+  over this engine's tables once MDV lines exist.

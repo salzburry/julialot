@@ -2,9 +2,9 @@
 
 Stage 1 of the MDV port. It builds the 1L NDMM cohort and its attrition from
 MDV for one cohort prefix, and writes the table the MDV LOT engine reads. It is
-the Sep 16 build (`../../Sep 16/ndmm/`) with its extraction rewritten for MDV.
-`../MDV_RULES.md` sets each rule beside its Optum form. `DECISIONS.md` holds
-the reasoning, the Sep 16 decisions carried over, and the MDV ones added.
+the Optum cohort build with its extraction rewritten for MDV. `../MDV_RULES.md`
+sets each rule beside its Optum form. `DECISIONS.md` holds the reasoning: the
+Optum decisions, carried over whole, and the MDV ones added.
 
 ## In brief
 
@@ -34,10 +34,30 @@ CODELIST_DIR=/mnt/code/codelist_mdv DATABRICKS_PWD=... Rscript ndmm/build.R mdv_
 ```
 
 The prefix can be given as `OBJECT_PREFIX` instead, and must end in `_`.
-Everything else behaves as it does in the Sep 16 build: one run per prefix, a
-re-run in one Domino execution keeping its run id, and the run log
-(`PIPELINE_LOG_FILE`, or `OUTPUT_DIR/pipeline_run_<time>_<pid>.log`). The
-tests need no warehouse:
+Every table the build reads from or writes to the work schema is named work
+schema + prefix + table, so two cohorts sit side by side in one schema.
+
+**One run per prefix at a time.** Table names carry no run id, so two runs on
+one prefix would replace tables the other is reading. `check_no_active_run()`
+refuses a run while `NDMM_BUILD_STATUS` has a `started` row for the prefix.
+Runs on different prefixes are safe. It is a check, not a lock: two runs
+starting at the same moment can both pass it. A killed process leaves its
+`started` row behind; `NDMM_IGNORE_ACTIVE_RUN=TRUE` gets past it, and should be
+set only once the named run is known to be dead.
+
+**Re-running.** A re-run inside one Domino execution keeps its run id
+(`DOMINO_RUN_ID`). Before the first step, this run id's rows are deleted from
+`NDMM_ATTRITION`, `NDMM_RUN_METADATA` and `NDMM_CODELIST_METADATA`, so a failed
+attempt cannot leave a row describing a cohort this attempt did not build.
+
+**The run log.** Everything the run prints - log lines, QC tables, warnings and
+the `ERROR:` line it stopped on - goes to the console and to one file:
+`PIPELINE_LOG_FILE` if set, otherwise `OUTPUT_DIR/pipeline_run_<time>_<pid>.log`.
+If a named `PIPELINE_LOG_FILE` cannot be written the run logs to the console
+only; if the default location cannot be written it logs to R's temporary
+folder and says so, because that folder is deleted when the process exits.
+
+The tests need no warehouse:
 
 ```
 Rscript ndmm/tests/test_runner.R      # the runner, the checks, the SQL shapes
@@ -109,6 +129,39 @@ Validated, recorded in `NDMM_RUN_METADATA`, and not pinned.
 | `NDMM_INDEX_EXCLUDED_ABBRS` | (empty) | `CL_MED_ABBR` patterns, separated by `\|`. Set `PANO\|ELOT` |
 | `NDMM_INDEX_EXCLUDED_CODES` | (empty) | receipt codes, `RECEIPTCODE:<code>` or bare |
 
+### Barring agents from the 1L index
+
+The study's I3 (protocol inclusion criterion I3, "Eligible 1L treatment") bars
+panobinostat and elotuzumab from setting the 1L index. The build bars
+belantamab itself; name the others in `config.csv`:
+
+```
+NDMM_INDEX_EXCLUDED_ABBRS,PANO|ELOT,Exclude panobinostat and elotuzumab from eligible 1L index treatment
+```
+
+Separate entries with `|`. The code splits on `,` as well, but in `config.csv`
+a comma survives only while the value stays quoted, and an editor that drops
+the quotes splits the row so that only the first entry is applied.
+
+- Each entry is trimmed, upper-cased and matched as a SQL `LIKE` pattern
+  against the code list's `CL_MED_ABBR` (also trimmed and upper-cased). With no
+  wildcard it is a whole-abbreviation match; `%` matches any run of characters
+  (`PANO%`), and `_` matches any one.
+- The abbreviations must be the ones on the production `cl_mma_codelist.csv`.
+  An entry matching no row stops the build.
+- `NDMM_INDEX_EXCLUDED_CODES` bars by receipt code: `RECEIPTCODE:<code>`, or a
+  bare code, compared with the resolved receipt codes after punctuation is
+  stripped. Any other type stops the build; bar an agent the list names by
+  `NAME_ENG` pattern by its abbreviation instead.
+- A barred agent's acts cannot set the index; the next eligible act does. It
+  does not exclude the patient, and its acts still count as MM therapy for
+  criterion 6.
+
+The run records what it barred: `NDMM_RUN_METADATA.INDEX_EXCLUDED` and
+`INDEX_EXCLUDED_CODES`, the log line `Barred from setting the index, beyond
+belantamab: ...`, and `ELIGIBLE = 0` on each barred agent's row of
+`NDMM_INDEX_AGENTS`.
+
 ### Waivers
 
 `NDMM_WAIVERS=mdv_values` lets a run past `check_mdv_values()` when a
@@ -140,6 +193,29 @@ column still means something:
 | `NDMM_RUN_METADATA` | adds `MDV_VINTAGE`, `MDV_IP_RULE`, `MDV_REQUIRE_CANCERFLG`, `MDV_SOURCE` |
 | `NDMM_CODELIST_METADATA`, `NDMM_BUILD_STATUS` | as on Optum; LOT reads the status row |
 
+### The sensitivity tables
+
+None of them changes the cohort. Each prices a rule that is still open, or
+shows what a code list actually did, so a decision is made on a number.
+
+| table | what it is for | DECISIONS |
+|---|---|---|
+| `NDMM_MM_DX_RULES` | criterion 1 under each MDV reading: the inpatient rule, confirmed only, the cancer flag (`../MDV_RULES.md`, section 2) | M |
+| `NDMM_MDV_SOURCE_PROFILE` | MDV's value codes on the records the cohort reads, so a wrong code is seen before a count is believed | M |
+| `NDMM_INDEX_AGENTS` | every `CL_MED_ABBR` on the code list: `ELIGIBLE` (0 = barred from setting the index) and `N_PATIENTS`, the patients whose index act was that agent. Read it before barring an agent | 3 |
+| `NDMM_FU_CE_COUNTS` | criterion 5 at 0, 30, 60 and 90 days and at three calendar months (`add_months`): `N_PASSING_CRITERION_5`, and `N_COHORT`, the whole cohort at that window. `IS_THIS_RUN` marks the applied row; carries `RUN_ID` | 1, 7 |
+| `NDMM_PREG_WINDOW_COUNTS` | criterion 8 over the study period (applied) and over the patient's own baseline plus follow-up: `N_WITH_PREG_CLAIM`, `N_EXCL_INCREMENTAL` and `N_COHORT` | 9 |
+| `NDMM_OTHER_MALIG_GROUPS` | every pairing group the other-cancer list resolves to (ICD-10 category, or `MET`), with its code and label counts. A group holding one code can only confirm itself | 4 |
+| `NDMM_OTHER_MALIG_GRAIN` | criterion 7 (`N_EXCLUDED` among 1L candidates) at six pairing grains: `same code-list label`, `as configured`, `mets kept apart by prefix`, `collapse without C77`, `collapse without C800`, `any label at all` | 4 |
+| `NDMM_OTHER_MALIG_CODES` | the other-cancer code list as this run applied it: each code with its label, override flag and pairing groups | 4 |
+| `NDMM_MM_ADJACENT_GROUPS` | every label containing `PLASMACYTOMA`, `PLASMA CELL`, `GAMMOPATHY` or `MYELOMA`, and every overridden label, with `OVERRIDDEN` and its code count. A plasma-cell label still excluding is named in the log | 4 |
+| `NDMM_MM_ADJACENT_CODES` | every code kept as the index disease rather than another cancer, with the label that kept it | 4 |
+| `NDMM_BELANTAMAB_RECONCILE` | every belantamab act of a cohort member up to that patient's `ENDDATE_CE`, the last MDV record, with `DAYS_FROM_INDEX`. All are on or after the index, so `lot`'s `no_belantamab` removes every patient listed | 2 |
+
+`NDMM_PREG_WINDOW_COUNTS` is checked as it is written: both rows must
+partition the same population, the narrower window can only leave a larger
+cohort, and the applied row must equal the cohort. A failure stops the run.
+
 ## The criteria as applied
 
 | # | criterion | on MDV | source |
@@ -156,23 +232,50 @@ column still means something:
 
 ## What stops a run
 
-Everything that stops the Sep 16 build, less the NDC and ICD_FLAG conditions,
-plus:
+On any stop after the run is marked `started`, its `NDMM_BUILD_STATUS` row is
+set to `failed`, carrying whatever `FINDINGS` it had.
 
-- a missing MDV column, named with its table;
-- a configured value code matching no MM diagnosis record, or a date column
-  no record could be read from (`check_mdv_values`, waivable as
-  `mdv_values`);
-- a code-list row of a type no MDV scan reads;
-- an ICD10 row where the delivery has no ICD-10 column;
-- a `DISEASECODE` row on `mm_dx.csv` or `other_malig.csv` with no `icd10`;
-- a receipt code the drug list gives to two agents;
-- a drug list that resolves to no receipt code at all.
+Before anything is written - the checks under "Settings": a malformed setting,
+an Optum setting name (`OPTUM_CDM_SCHEMA`, `TBL_*` and the rest), no output
+schema or prefix, a contract difference without the override, a run choice
+outside its values, constants that disagree with the settings, no
+`DATABRICKS_PWD`, another run `started` on the prefix, an unreadable MDV table,
+or a missing MDV column, named with its table.
+
+While running:
+
+- **Code lists.** A missing directory or file, a file not among the five, a
+  missing column, no rows, or a file that changed while it was read. A code
+  type a list may not carry (`codelists/README.md` gives each list's types);
+  an `ICD10` row where the delivery has no ICD-10 column; a `DISEASECODE` row
+  on `mm_dx.csv` or `other_malig.csv` with no `icd10`. In
+  `cl_mma_codelist.csv`: a blank `CL_MED_ABBR`, a receipt code the list gives
+  to two agents, or a list that resolves to no receipt code at all. In
+  `pregnancy.csv` or `clintrial.csv`: no usable codes.
+- **MDV values.** A configured value code matching no MM diagnosis record, or
+  a date column no record could be read from (`check_mdv_values`, waivable as
+  `mdv_values`).
+- **Names that match nothing.** `NDMM_BELANTAMAB_ABBR` matching no row, or
+  another `BEL*` abbreviation on the list; an `NDMM_INDEX_EXCLUDED_ABBRS` or
+  `_CODES` entry matching no row; an MM-adjacent label the current
+  `NDMM_MM_ADJACENT_STATES` mode requires missing from `other_malig.csv`.
+- **Its own tables.** A checkpoint that cannot be written; a trial-flag row
+  with no diagnosis date; an inconsistent `NDMM_PREG_WINDOW_COUNTS`; an
+  attrition step larger than the one above it; an empty cohort; any failure of
+  `check_ndmm_cohort()`; a code list with no recorded hash; a column that
+  cannot be added to an existing metadata table.
+
+The Optum build's NDC-shape and `ICD_FLAG` stops have no MDV counterpart: MDV
+has neither column.
+
+New against the Optum build: the refusal of an Optum setting name, the MDV
+column and value checks, the code types by MDV type, and the receipt-code
+checks on the drug list.
 
 ## Not here
 
-The 2L and 3L cohorts (`../../Sep 16/ndmm/build_subsequent_cohorts.R`) are not
-ported (`../MDV_RULES.md`, section 5).
+The 2L and 3L cohorts are not ported (`../MDV_RULES.md`, section 5). The Optum
+build derives them from the lines, after the LOT build.
 
 ## Files
 
