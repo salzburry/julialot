@@ -8,15 +8,15 @@ it.
 
 Three sources decide the MDV form of a rule:
 
-- **the Sep 16 Optum rule** (`../ndmm/README.md`, `../ndmm/DECISIONS.md`,
-  `../lot/LOT_RULES.md`). This is the business rule, and it is the default.
+- **the Sep 16 Optum rule** (`../Sep 16/ndmm/README.md`, `../Sep 16/ndmm/DECISIONS.md`,
+  `../Sep 16/lot/LOT_RULES.md`). This is the business rule, and it is the default.
 - **the MDV ovarian cancer business rules** a colleague wrote against this
   warehouse (`reference/MDV_Ovarian_Cancer_Business_Rules.md`, "the OC
   rules"). They give MDV's table and column names and this team's conventions
   for reading them. Where they add a condition that is about ovarian cancer
   rather than about MDV, the condition is offered here as a setting and its
   effect is counted on every run. It is not applied by default.
-- **`../lot/PORTING.md`**, "MDV specifically", which names the three places MDV
+- **`../Sep 16/lot/PORTING.md`**, "MDV specifically", which names the three places MDV
   meets the LOT engine: drug vocabulary, observation, and day supply.
 
 Anything none of the three settles is marked **(confirm)**. It has a default
@@ -137,7 +137,7 @@ pays for an investigational drug, so it does not reach the claim at all.
 
 ## 4. The lines of therapy
 
-**Unchanged:** every line rule in `../lot/LOT_RULES.md`. That covers the MAP
+**Unchanged:** every line rule in `../Sep 16/lot/LOT_RULES.md`. That covers the MAP
 episode state machine, the induction windows, the run-out chain, the end
 cascade, the next-line triggers, the SCT clustering and tandem rule, CAR-T,
 the melphalan and fold-in rules, and the line criteria (belantamab in any
@@ -214,7 +214,7 @@ named here so it is decided on purpose.
 9. **Japanese practice.** PORTING.md: "the regimen vocabulary, the transplant
    rate and the relevance of the melphalan rule (4.7) should be re-examined
    with a clinician." The rules are the Optum study's, unchanged.
-10. **The 2L and 3L cohorts** (`../ndmm/build_subsequent_cohorts.R`) are not
+10. **The 2L and 3L cohorts** (`../Sep 16/ndmm/build_subsequent_cohorts.R`) are not
     ported. On MDV their enrolment windows would become lookback and
     follow-up windows of the same kind as criteria 4 and 5.
 

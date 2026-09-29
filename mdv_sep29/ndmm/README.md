@@ -2,7 +2,7 @@
 
 Stage 1 of the MDV port. It builds the 1L NDMM cohort and its attrition from
 MDV for one cohort prefix, and writes the table the MDV LOT engine reads. It is
-the Sep 16 build (`../../ndmm/`) with its extraction rewritten for MDV.
+the Sep 16 build (`../../Sep 16/ndmm/`) with its extraction rewritten for MDV.
 `../MDV_RULES.md` sets each rule beside its Optum form. `DECISIONS.md` holds
 the reasoning, the Sep 16 decisions carried over, and the MDV ones added.
 
@@ -171,7 +171,7 @@ plus:
 
 ## Not here
 
-The 2L and 3L cohorts (`../../ndmm/build_subsequent_cohorts.R`) are not
+The 2L and 3L cohorts (`../../Sep 16/ndmm/build_subsequent_cohorts.R`) are not
 ported (`../MDV_RULES.md`, section 5).
 
 ## Files

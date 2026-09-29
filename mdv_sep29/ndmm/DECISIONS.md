@@ -9,7 +9,7 @@ Statuses. **Signed off**: settled. **Open**: the code applies one reading and
 the study team still has to confirm it. **Measured**: nothing to decide until
 the first run's number is read. **Not built**: the code does not do it.
 
-This is the Sep 16 register (`../../ndmm/DECISIONS.md`) with one section added
+This is the Sep 16 register (`../../Sep 16/ndmm/DECISIONS.md`) with one section added
 at the top, **MDV**, for the decisions the port makes. Sections 1 to 12 are the
 Optum decisions, carried over because the rules are the same study's. "Signed
 off" there means signed off **for Optum**; the whole MDV build is a deviation

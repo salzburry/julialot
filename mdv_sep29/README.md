@@ -1,9 +1,14 @@
 # mdv_sep29: the NDMM cohort and lines of therapy on MDV
 
-The Sep 16 study code for the NDMM cohort (`../ndmm/`) and the lines-of-therapy
-engine (`../lot/engine/`), ported from Optum Clinformatics to **MDV** (Medical
+The Sep 16 study code for the NDMM cohort (`../Sep 16/ndmm/`) and the lines-of-therapy
+engine (`../Sep 16/lot/engine/`), ported from Optum Clinformatics to **MDV** (Medical
 Data Vision): `clnprw_mdv_all_use`, the 2026q2 extract, on the same Databricks
-warehouse. Built from the Sep 16 folder only.
+warehouse.
+
+**Sep 16 is the only source.** The NDMM cohort definition is Sep 16's
+(`../Sep 16/ndmm/`) and the LOT rules are Sep 16's (`../Sep 16/lot/`). Nothing
+is taken from the earlier deliveries (Jul 28, Aug 14, Sep 10 and before). This
+folder sits beside Sep 16, not inside it, and Sep 16 is not changed.
 
 **`MDV_RULES.md` is the document to read.** It sets each Optum rule beside its
 MDV form, gives where each MDV choice came from, and lists what is still open.
@@ -17,7 +22,7 @@ MDV form, gives where each MDV choice came from, and lists what is still open.
 | `lot/engine/` | the LOT engine on MDV: the Sep 16 line rules, with the MDV extraction. `lot/README.md` |
 | `codelists/` | the MDV code lists' shapes (headers only) and how to author them. The lists themselves live on production, like the Optum ones |
 | `reference/` | the colleague's MDV ovarian cancer business rules, transcribed; the search of this account's other repositories for MDV documentation |
-| `tests/` | the DuckDB stand-in warehouse (`duck_bridge.py`) and the synthetic MDV patients (`fixture_mdv.R`) the suites run against |
+| `tests/` | the DuckDB stand-in warehouse (`duck_bridge.py`), the synthetic MDV patients (`fixture_mdv.R`) the suites run against, and `run_all.R`, which runs every suite |
 
 Rules, not code, are the port's substance. The machinery around them is the
 Sep 16 build's and is kept as it was: the contract, the checks made before
@@ -61,7 +66,7 @@ CODELIST_DIR=$CL DATABRICKS_PWD="$DATABRICKS_PWD" PROJECT_WORK_SCHEMA=$SCHEMA \
 
 Give MDV runs a prefix of their own (`mdv_`) so they never sit on an Optum
 prefix. The settings, the run log, the "one run per prefix" rule and the
-override switches all work as in Sep 16 (`../README.md`).
+override switches all work as in Sep 16 (`../Sep 16/README.md`).
 
 **Sensitivity builds.** PORTING.md asks for two or three day-supply values
 before one is chosen. Run each under its own prefix, recorded as a deviation:
@@ -71,6 +76,12 @@ MEDICAL_DAY_SUPPLY=21 LOT_CONTRACT_OVERRIDE=TRUE ... Rscript lot/engine/build.R 
 ```
 
 ## Checking it without a warehouse
+
+```bash
+Rscript tests/run_all.R                               # all five, one exit status
+```
+
+or one at a time:
 
 ```bash
 (cd ndmm       && Rscript tests/test_runner.R)       # the runner, the checks, the SQL shapes
@@ -85,13 +96,16 @@ They need base R with `glue`. The two MDV suites also need `python3` with
 missing. All five pass: 407, 57, 532, 59, 23. `MDV_RULES.md`, "What was
 tested", says what they cover and what they do not.
 
+The repository's merge gate (`../validation/run_gate.R`) gates Sep 16. This
+folder is not part of that delivery, so `tests/run_all.R` is what checks it.
+
 ## Not ported
 
-- **The 2L and 3L cohorts** (`../ndmm/build_subsequent_cohorts.R`).
-- **The study package, table shells and dashboard** (`../variables/`,
-  `../TFLS/`, `../dashboard/`). They read `S_*` tables built from the cohort
+- **The 2L and 3L cohorts** (`../Sep 16/ndmm/build_subsequent_cohorts.R`).
+- **The study package, table shells and dashboard** (`../Sep 16/variables/`,
+  `../Sep 16/TFLS/`, `../Sep 16/dashboard/`). They read `S_*` tables built from the cohort
   and the lines, and are written against Optum's variables: HCRU, comorbidity
   and secondary malignancy by Optum codes.
-- **The LOT QC, melphalan and vignette packages** beside `../lot/engine/`.
+- **The LOT QC, melphalan and vignette packages** beside `../Sep 16/lot/engine/`.
   They read LOT outputs and would run over this engine's tables. They are left
   in Sep 16 until the MDV lines exist.

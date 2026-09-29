@@ -226,14 +226,6 @@ EXPECTED_SUITES <- list(
     "lot/qc/tests/test_lot_qc.R",
     "lot/qc/tests/test_trace_returns.R",
     "lot/validation/tests/test_vignettes.R",
-    # The MDV port of the cohort and the lines (mdv_sep29/MDV_RULES.md). The
-    # two MDV-named suites run each build's own SQL against synthetic MDV in
-    # duckdb, the way the LOT QC and variables suites do.
-    "mdv_sep29/lot/engine/tests/test_line_criteria.R",
-    "mdv_sep29/lot/engine/tests/test_mdv_extract.R",
-    "mdv_sep29/lot/engine/tests/test_runner.R",
-    "mdv_sep29/ndmm/tests/test_mdv_build.R",
-    "mdv_sep29/ndmm/tests/test_runner.R",
     "ndmm/tests/test_runner.R",
     "ndmm/tests/test_subsequent.R",
     "variables/tests/run_tests.R"),

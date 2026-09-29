@@ -1,9 +1,9 @@
 # The LOT engine on MDV
 
 Stage 2 of the MDV port: the Sep 16 lines-of-therapy engine
-(`../../lot/engine/`) with its **extraction half** rebuilt for MDV, split where
-`../../lot/PORTING.md` puts the seam. The **line rules** are the Sep 16
-engine's, unchanged, and `../../lot/LOT_RULES.md` is their reference. So are
+(`../../Sep 16/lot/engine/`) with its **extraction half** rebuilt for MDV, split where
+`../../Sep 16/lot/PORTING.md` puts the seam. The **line rules** are the Sep 16
+engine's, unchanged, and `../../Sep 16/lot/LOT_RULES.md` is their reference. So are
 the induction windows, the MAP state machine, the run-out chain, the SCT
 clustering, CAR-T, the melphalan and fold-in rules, and the line criteria.
 `../MDV_RULES.md`, section 4, gives the Optum-to-MDV table.
@@ -15,7 +15,7 @@ CODELIST_DIR=/mnt/code/codelist_mdv DATABRICKS_PWD=... \
 
 The cohort table is the MDV cohort build's (`../ndmm/`). The arguments, the
 prefix rules, the study window, the lineage check against `NDMM_BUILD_STATUS`,
-`LOT_CONTRACT_OVERRIDE` and the outputs are as in Sep 16 (`../../lot/CONTENTS.md`),
+`LOT_CONTRACT_OVERRIDE` and the outputs are as in Sep 16 (`../../Sep 16/lot/CONTENTS.md`),
 with one new output, `MMA_RECEIPTS`.
 
 ## What changed
@@ -33,7 +33,7 @@ with one new output, `MMA_RECEIPTS`.
 Nothing else in `R/` differs from Sep 16:
 
 ```
-diff -r "../../lot/engine/R" "R"    # from this folder
+diff -rq "../../Sep 16/lot/engine/R" engine/R    # from this folder (lot/)
 ```
 
 ## Day supply, the one assumption everything follows from
