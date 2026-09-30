@@ -74,10 +74,8 @@ source(file.path(here, "R", "scenarios.R"))
 
 # Which tables to export. Read off the package's own registry rather than
 # listed, so a module added there is exported without editing this file.
-local({
-  for (f in c("config_223926.R", "db_utils_223926.R", "registry.R"))
-    source(file.path(pkg_dir, "R", f))
-})
+# Also sets DASH_CONTRACT_MD5, which scenario_is_usable() reads.
+load_study_registry(pkg_dir)
 
 # A prefix names a directory under the snapshot as well as a set of tables, so
 # it is held to what a directory name may be - the same test the app's reader

@@ -1825,6 +1825,28 @@ cat("\nthe rules that hold the numbers up\n")
        "STUDY_CONTRACT_MD5 is the md5 of the contract's lines: the same for a CRLF copy, where a byte hash differs")
   })
 
+  # ...and its rows come out in one order whatever the machine's locale. A
+  # stand-in order() that sorts "_" ahead of letters, as Domino's en_US locale
+  # does, unless it is asked for radix: a contract sorted by collation would
+  # put S_COMORB_SUBGROUP first and hash differently from TFLS's bundled copy.
+  local({
+    env <- new.env(parent = environment(study_contract))
+    env$order <- function(..., na.last = TRUE, decreasing = FALSE,
+                          method = c("auto", "shell", "radix")) {
+      keys <- list(...)
+      if (!identical(method, "radix"))
+        keys <- lapply(keys, function(x) chartr("_", " ", x))
+      do.call(base::order, c(keys, list(na.last = na.last,
+                                        decreasing = decreasing,
+                                        method = "radix")))
+    }
+    ok(identical(env$order(c("S_COMORBIDITY", "S_COMORB_SUBGROUP")), 2:1),
+       "the stand-in collation sorts S_COMORB_SUBGROUP ahead of S_COMORBIDITY")
+    f <- study_contract; environment(f) <- env
+    ok(identical(f(), study_contract()),
+       "...and the contract's rows are the same under it, so a run in any locale records the hash of the bundled copy")
+  })
+
   # 10d. ONE connection across the study folders. The LOT build is the run that is
   # verified against the warehouse, so everything else has to open it the
   # same way: the same call, on the same two variables. Checked against the

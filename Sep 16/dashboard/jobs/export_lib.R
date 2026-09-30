@@ -6,6 +6,21 @@
 # read that came back empty means, and when a snapshot becomes visible - live
 # here instead, and the job sources them.
 
+# The study registry the job decides by, and which contract it is.
+#
+# The job refuses a run it cannot describe with the app's own test,
+# scenario_is_usable() in R/scenarios.R, which compares the run's
+# STUDY_CONTRACT_MD5 with DASH_CONTRACT_MD5. The app sets that in global.R,
+# which the job does not source, so the job sets it here the same way: the
+# hash of the contract this registry is, as the run computes it.
+load_study_registry <- function(pkg_dir) {
+  for (f in c("config_223926.R", "db_utils_223926.R", "registry.R",
+              "contract.R"))
+    source(file.path(pkg_dir, "R", f))
+  assign("DASH_CONTRACT_MD5", study_contract_md5(), envir = globalenv())
+  invisible(get("DASH_CONTRACT_MD5", envir = globalenv()))
+}
+
 # The settings this row runs under. Computed once and given to both the build
 # and the export, because they have to be the same settings: a row setting
 # WORK_SCHEMA or LOT_PREFIX would otherwise build in one place and be read from

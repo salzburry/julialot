@@ -918,6 +918,34 @@ cat("\nwithholding a cell is not the same as hiding it\n")
   ok(grepl("^[0-9a-f]{32}$", DASH_CONTRACT_MD5) &&
        identical(DASH_CONTRACT_MD5, study_contract_md5()),
      "the dashboard knows which contract its registry is, by the package's own hash")
+  # The snapshot Job decides the same way, in a process that never sources
+  # global.R: loaded as the job loads it, a run of this registry exports and
+  # one of another is refused - rather than the check itself stopping on a
+  # name only the app defines.
+  local({
+    f <- tempfile(fileext = ".R"); on.exit(unlink(f), add = TRUE)
+    writeLines(c(
+      'source("jobs/export_lib.R"); source("R/sources.R"); source("R/scenarios.R")',
+      'load_study_registry(file.path("..", "variables"))',
+      'bound <- list(state = "complete", study_contract_md5 = DASH_CONTRACT_MD5)',
+      'other <- list(state = "complete", study_contract_md5 = strrep("0", 32))',
+      'cat(DASH_CONTRACT_MD5, scenario_is_usable(bound), scenario_is_usable(other),',
+      '    grepl("different study contract", scenario_unusable_why(other)), "\\n")'),
+      f)
+    out <- suppressWarnings(system2(file.path(R.home("bin"), "Rscript"), shQuote(f),
+                                    stdout = TRUE, stderr = TRUE))
+    ok(is.null(attr(out, "status")) &&
+         identical(trimws(utils::tail(out, 1)),
+                   paste(DASH_CONTRACT_MD5, "TRUE FALSE TRUE")),
+       paste0("the snapshot Job, in its own process, knows the same contract as the app, ",
+              "exports a run of it and refuses one of another (got: ",
+              paste(utils::tail(out, 2), collapse = " | "), ")"))
+  })
+  jb_reg <- paste(readLines("jobs/build_scenarios.R", warn = FALSE), collapse = "\n")
+  ok(regexpr("load_study_registry(pkg_dir)", jb_reg, fixed = TRUE) > 0 &&
+       regexpr("load_study_registry(pkg_dir)", jb_reg, fixed = TRUE) <
+         regexpr("export_one <- function", jb_reg, fixed = TRUE),
+     "...and the job loads the registry that way, before it can export anything")
   other <- utils::modifyList(SCENARIOS[[1]],
                              list(study_contract_md5 = "00000000000000000000000000000000"))
   ok(isTRUE(scenario_contract_bound(SCENARIOS[[1]])) &&
@@ -1374,7 +1402,8 @@ source(file.path(here, "jobs", "export_lib.R"))
   # safe_segment() is the reader's and uses `%||%`, which base R has only
   # from 4.4; the package supplies it for older ones. Called before that
   # source the job did not merely skip the gate, it could not start.
-  ok(regexpr('source(file.path(pkg_dir, "R", f))', jb, fixed = TRUE) <
+  ok(regexpr("load_study_registry(pkg_dir)", jb, fixed = TRUE) > 0 &&
+       regexpr("load_study_registry(pkg_dir)", jb, fixed = TRUE) <
        regexpr("vapply(grid$prefix, safe_segment", jb, fixed = TRUE),
      paste0("the prefix gate runs after the package is sourced, because the ",
             "test it calls needs an operator older R does not have"))

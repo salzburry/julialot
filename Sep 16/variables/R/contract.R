@@ -40,7 +40,11 @@ study_contract <- function() {
                stringsAsFactors = FALSE)
   })
   out <- do.call(rbind, Filter(Negate(is.null), rows))
-  out[order(out$MODULE, out$TABLE), , drop = FALSE]
+  # radix, not the default: character sort is collation-sensitive, and the
+  # run records the hash of this order. Under a locale that sorts "_" ahead of
+  # letters, S_COMORB_SUBGROUP would come before S_COMORBIDITY, and the copy
+  # TFLS holds would hash differently from the run it is filling from.
+  out[order(out$MODULE, out$TABLE, method = "radix"), , drop = FALSE]
 }
 
 # The contract, as one value a run can record.

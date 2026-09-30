@@ -108,7 +108,8 @@ study package sits beside this folder.
 A run records the md5 of the contract it was driven by in
 `S_RUN_METADATA.STUDY_CONTRACT_MD5`. Before anything is read the bundled copy
 is hashed the same way - over its lines, so other line endings are the same
-contract - and a difference stops the fill. No setting waives it: a contract
+contract - and a difference stops the fill. The rows are in byte order, not the
+machine's locale order, so a run on any machine records the hash of this copy. No setting waives it: a contract
 from another version of the package can name a table as unsuppressed that this
 run suppressed.
 
