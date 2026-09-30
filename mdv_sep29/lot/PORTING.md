@@ -179,9 +179,10 @@ before any number is believed, confirmed against MDV's own data dictionary.
 1. **No NDC, no HCPCS.** Drugs are identified by Japanese receipt/YJ codes.
    `cl_mma_codelist.csv` must be re-authored in that vocabulary, and the four
    Optum claim arms in `03_mma_map.R` collapse to whatever MDV's drug-order
-   table offers. The code list's `CL_CODE_TYPE` column is the extension point,
-   but drug extraction reads only `NDC` and `HCPCS`, and any other type stops
-   the build under `code_types` until an arm that reads it is added.
+   table offers. The code list's `CL_CODE_TYPE` column is the extension point:
+   the Optum engine's extraction read only `NDC` and `HCPCS` and stopped on any
+   other type under `code_types`. This folder's engine reads `RECEIPTCODE` and
+   `NAME_ENG` instead, and stops on `NDC` or `HCPCS` the same way (below).
 2. **Observation is attendance at a contributing hospital, not enrolment.**
    There is no insurance span, so `CENSOR_AT_DISENROLLMENT` has no direct
    analogue, and a patient who stops attending is indistinguishable from one

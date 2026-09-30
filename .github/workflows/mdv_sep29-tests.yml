@@ -1,6 +1,6 @@
 name: mdv_sep29 tests
 
-# The MDV port's six suites, through the folder's own runner
+# The MDV port's seven suites, through the folder's own runner
 # (mdv_sep29/tests/run_all.R). The folder is a delivery of its own, outside the
 # gate the Sep 16 workflow runs, so without this job nothing checks it on a
 # push. It reads nothing outside the folder, so only a change to the folder or
@@ -31,12 +31,19 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+      # Spark 4.0, for the suite that runs the builds' SQL in Spark itself
+      # (ANSI mode on, no translation). It needs Java 17 or later.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
       # Pinned. sqlglot translates the Spark SQL the builds emit and duckdb
-      # executes it, so a new version of either can change what the suites
-      # assert without a line of the folder changing. These are the versions
-      # the suites were verified against; move them deliberately.
+      # executes it, and pyspark is the Spark the SQL is also run in, so a new
+      # version of any can change what the suites assert without a line of the
+      # folder changing. These are the versions the suites were verified
+      # against; move them deliberately.
       - name: Install Python dependencies
-        run: pip install 'duckdb==1.5.6' 'sqlglot==30.20.0'
+        run: pip install 'duckdb==1.5.6' 'sqlglot==30.20.0' 'pyspark==4.0.1'
       # One entry point, one exit status. A skipped suite fails it too.
-      - name: All six suites (exits non-zero if any is not as expected)
+      - name: All seven suites (exits non-zero if any is not as expected)
         run: Rscript mdv_sep29/tests/run_all.R

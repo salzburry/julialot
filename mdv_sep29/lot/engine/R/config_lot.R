@@ -27,7 +27,10 @@ cfg_defaults <- list(
   # ---- MDV source ----
   # The tables and columns are in R/mdv_source.R, shared with the cohort build.
   use_quarterly_tables = as.logical(Sys.getenv("USE_QUARTERLY_TABLES", unset = "TRUE")),
-  mdv_vintage          = Sys.getenv("MDV_VINTAGE", unset = "2026q2"),
+  # Blank - unset, or set empty - is the default, like every setting; the
+  # vintage is never derived from STUDY_END (mdv_vintage()).
+  mdv_vintage          = local({ v <- trimws(Sys.getenv("MDV_VINTAGE", unset = ""))
+                                 if (nzchar(v)) v else "2026q2" }),
   # The study window this run covers. build_lot() takes it as an argument, so
   # these are what a run uses when none is passed.
   #

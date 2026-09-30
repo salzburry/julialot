@@ -120,7 +120,7 @@ patient's last MDV record, and it is where every line is observed to
 | `R/prior_regimen.R` | The prior-regimen rule and each line's run-out chain (`LOT_RULES.md` §4.3, §5.2), both off `APPLY_OWN_RETURN_FOLD`. |
 | `R/steps/01_codelists.R` | Code lists into views, the drug list resolved to receipt codes (`MMA_RECEIPTS`), then the consistency checks between them (see "The code-list checks"). |
 | `R/steps/02_patient_input.R` | The cohort as the build reads it, snapshotted into `LOT_PATIENT_INPUT`. Sets `OBS_END_DT`, the observation end every later gap and window is measured against. |
-| `R/steps/03_mma_map.R` | Drug acts into medication available periods, `MAP_STACKED` (`LOT_RULES.md` §2, §5.1). Split at the seam: `phase_mma_extract()` reads MDV acts; `phase_map()` is the line-assembly half. |
+| `R/steps/03_mma_map.R` | Drug acts into medication available periods, `MAP_STACKED` (`LOT_RULES.md` §2, §5.1). Split at the seam: `phase_mma_extract()` reads MDV acts, and stops on an oral act with no days supplied whose care setting is neither `MDV_INPATIENT` nor `MDV_OUTPATIENT` (fix the codes, or declare the column `NONE`); `phase_map()` is the line-assembly half. |
 | `R/steps/04_lot1_base.R` | Line 1's start, its induction medications and its base regimen. |
 | `R/steps/05_sct.R` | Transplant and CAR-T events: autologous, allogeneic, CAR-T (`LOT_RULES.md` §6), and the SCT code-list checks. Split at the seam: `phase_sct_extract()` reads MDV acts and confirmed diagnoses; `phase_sct_cluster()` clusters them. |
 | `R/steps/05b_lot1_sct.R` | Line 1's own transplant summary, which needs line 1's base. |

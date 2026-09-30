@@ -36,6 +36,14 @@ if (!have_duck) {
 
 work <- file.path(tempdir(), "mdv_lot")
 fx <- write_mdv_fixture(work)
+# 2026q4: the act table's care-setting column carries 9, which neither code reads.
+write_mdv_fixture(work, vintage = "2026q4")
+local({
+  f <- file.path(work, "clnprw_mdv_all_use.t_actdata_2026q4.csv")
+  a <- utils::read.csv(f, stringsAsFactors = FALSE, colClasses = "character")
+  a$nyugaikbn <- "9"
+  utils::write.csv(a, f, row.names = FALSE, na = "")
+})
 # Steroids are kept out of the production code list (lot/CONTENTS.md, "the
 # code-list checks"); the shared fixture carries dexamethasone to test the
 # cohort build's own steroid drop, so it is taken out here.
@@ -145,7 +153,10 @@ if (!inherits(r1, "error")) {
   sc <- duck_query("SELECT PATID, SCT_TYPE, cast(DATE_SERVICE as string) AS DT FROM sct_claims_raw ORDER BY PATID, DT")
   ok(identical(sc$DT[sc$PATID == "P01" & sc$SCT_TYPE == "AUTO"], c("2019-09-01", "2019-09-10")),
      "P01's two autologous transplant acts are both raw AUTO events, for the clustering to take the last")
-  ok(identical(sc$SCT_TYPE[sc$PATID == "P13"], "ALLO"), "P13's allogeneic transplant is an ALLO event")
+  ok(identical(sc$SCT_TYPE[sc$PATID == "P13"], "ALLO"),
+     "P13's allogeneic transplant is an ALLO event - and her blank-coded act is no CAR-T")
+  ok(!any(mp$PATID == "P13" & mp$MED_ABBR == "MELP"),
+     "nor a melphalan act: a master code of '--' named melphalan joins nothing")
   ok(identical(sc$SCT_TYPE[sc$PATID == "P16"], "CART"),
      "P16's CAR-T, a drug found by its English name, is a CART event")
   rc <- duck_query("SELECT count(*) AS n FROM wk.lotmdv_MMA_RECEIPTS")
@@ -225,6 +236,25 @@ if (identical(r7b, "")) {
   sc7 <- duck_query("SELECT PATID, SCT_TYPE FROM sct_claims_raw WHERE PATID = 'P16'")
   ok(!"CART" %in% sc7$SCT_TYPE, "...and the waiver's cost is visible: P16 has no CAR-T event")
 }
+
+cat("\n-- oral supply the care setting cannot size --\n")
+# With no days supplied, an oral act is sized by its setting. A value neither
+# code reads must not fall to ORAL_DAYS_DEFAULT as if outpatient.
+Sys.setenv(MDV_VINTAGE = "2026q4", MDV_COL_ACT_DAYS = "NONE", COHORT_PREFIX = "ndmm_")
+r9 <- run_with(fx$codelists, "unresolved_names", "mdvlot9", "lotmdv9_")
+ok(grepl("neither MDV_INPATIENT", r9, fixed = TRUE) && grepl("9 (", r9, fixed = TRUE),
+   "a care-setting value of 9 stops the run, naming the value")
+Sys.setenv(MDV_COL_ACT_NYUGAIKBN = "NONE")
+r9b <- run_with(fx$codelists, "unresolved_names", "mdvlot9b", "lotmdv9b_")
+ok(identical(r9b, ""), "declared NONE, the documented no-setting fallback runs")
+if (identical(r9b, "")) {
+  d9 <- duck_query("SELECT DAY_SUPPLY FROM mma_med_processed
+                    WHERE PATID = 'P02' AND MED_ABBR = 'LEN' AND cast(DATE_SERVICE as string) = '2020-06-16'")
+  ok(identical(as.integer(d9$DAY_SUPPLY), 28L),
+     "...and sizes the inpatient act at ORAL_DAYS_DEFAULT, because it was asked to")
+}
+Sys.unsetenv(c("MDV_VINTAGE", "MDV_COL_ACT_NYUGAIKBN"))
+Sys.setenv(MDV_COL_ACT_DAYS = "kaisu")
 
 cat("\n-- a sensitivity build under its own prefix names the cohort's --\n")
 # The documented sensitivity command writes under mdvds21_ over a cohort built

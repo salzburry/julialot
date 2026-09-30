@@ -34,6 +34,35 @@ phase_mma_extract <- function(con, ctx) {
   #
   # Everything after this - the MAP, the lines - reads the two claim types
   # exactly as it reads Optum's. LOT_RULES.md section 2.3.
+  # An oral act with no days supplied is sized by its care setting. With the
+  # setting column configured, a value that is neither MDV_INPATIENT nor
+  # MDV_OUTPATIENT would fall to ORAL_DAYS_DEFAULT as if outpatient - 28 days
+  # for what may be one inpatient day - and nothing would say so. Refused
+  # instead: fix the codes, or declare the column NONE to take the documented
+  # no-setting fallback on purpose.
+  if (nzchar(MDV_COLS$act_nyugaikbn)) {
+    unrec <- db_q(con, glue("
+      SELECT a.SETTING_RAW, count(*) AS n_acts
+      FROM ({mdv_act_select()}
+      ) a
+      INNER JOIN lot_patient_input p ON a.PATID = p.PATID
+      INNER JOIN (SELECT DISTINCT RECEIPTCODE FROM mma_receipts WHERE CL_ROUTE = 'ORAL') c
+              ON c.RECEIPTCODE = a.RECEIPTCODE
+      WHERE a.ACT_DT >= p.INDEX_DATE AND a.ACT_DT <= p.OBS_END_DT
+        AND a.INPT IS NULL
+        AND coalesce(a.ACT_DAYS, 0) < 1
+      GROUP BY a.SETTING_RAW
+      ORDER BY n_acts DESC"))
+    if (nrow(unrec) > 0)
+      stop(sum(unrec$n_acts), " oral act(s) with no days supplied carry a ",
+           MDV_COLS$act_nyugaikbn, " value that is neither MDV_INPATIENT ('",
+           MDV_VALUES$inpatient, "') nor MDV_OUTPATIENT ('", MDV_VALUES$outpatient,
+           "'): ", paste0(unrec$SETTING_RAW, " (", unrec$n_acts, ")", collapse = ", "),
+           ". Their supply cannot be sized. Set MDV_INPATIENT / MDV_OUTPATIENT to ",
+           "this delivery's codes, or MDV_COL_ACT_NYUGAIKBN=NONE to size every one ",
+           "at ORAL_DAYS_DEFAULT on purpose.", call. = FALSE)
+  }
+
   run_step(con, "S04_mma_med_raw", glue("
     CREATE OR REPLACE TEMPORARY VIEW mma_med_raw AS
     WITH codes AS (

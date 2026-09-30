@@ -42,7 +42,10 @@ cfg_defaults <- list(
                                                 unset = "TRUE")),
 
   use_quarterly_tables = as.logical(Sys.getenv("USE_QUARTERLY_TABLES", unset = "TRUE")),
-  mdv_vintage          = Sys.getenv("MDV_VINTAGE", unset = "2026q2"),
+  # Blank - unset, or set empty - is the default, like every setting; the
+  # vintage is never derived from STUDY_END (mdv_vintage()).
+  mdv_vintage          = local({ v <- trimws(Sys.getenv("MDV_VINTAGE", unset = ""))
+                                 if (nzchar(v)) v else "2026q2" }),
   study_end            = Sys.getenv("STUDY_END", unset = "2026-03-31"),
 
   # Earliest date an eligible 1L treatment can count.

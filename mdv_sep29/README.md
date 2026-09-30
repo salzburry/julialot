@@ -101,7 +101,7 @@ output prefix, so without it the run looks for the cohort's build status under
 ## Checking it without a warehouse
 
 ```bash
-Rscript tests/run_all.R                                 # all six, one exit status
+Rscript tests/run_all.R                                 # all seven, one exit status
 ```
 
 or one at a time:
@@ -113,11 +113,13 @@ or one at a time:
 (cd lot/engine     && Rscript tests/test_line_criteria.R)
 (cd lot/engine     && Rscript tests/test_mdv_extract.R)  # cohort, then LOT's MDV extraction
 (cd lot/validation && Rscript tests/test_vignettes.R)    # the rules, the vignettes and the engine agree
+Rscript tests/test_spark_sql.R                            # the SQL where DuckDB and Spark differ, in Spark
 ```
 
 They need base R with `glue`. The two MDV suites also need `python3` with
-`duckdb` and `sqlglot`, and each stops with a counted skip if those are
-missing. `MDV_RULES.md`, "What was tested", gives each suite's count and says
+`duckdb` and `sqlglot`. The Spark suite needs `pyspark` (4.0) and a Java
+runtime, 17 or later; `SPARK_PYTHON` names the python that has pyspark where it
+is not `python3`. Each stops with a counted skip if what it needs is missing. `MDV_RULES.md`, "What was tested", gives each suite's count and says
 what they cover and what they do not.
 
 ## Not ported

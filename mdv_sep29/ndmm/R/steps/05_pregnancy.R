@@ -14,13 +14,12 @@ build_ndmm_preg_codes <- function(con) {
   db_exec(con, glue("
     CREATE OR REPLACE TEMPORARY VIEW {NDMM_PREG_CODES} AS
     SELECT upper(trim(code_type)) AS code_type,
-           upper(regexp_replace(trim(code), '[^A-Za-z0-9]', '')) AS code
+           {mdv_code_sql('code')} AS code
     FROM {src}
-    WHERE code IS NOT NULL AND trim(code) <> ''
-      AND code_type IS NOT NULL AND trim(code_type) <> ''
+    WHERE code_type IS NOT NULL AND trim(code_type) <> ''
       -- Blank after normalising too, or a punctuation-only row matches every
-      -- claim whose code is missing. See 03_prior_therapy.R.
-      AND regexp_replace(trim(code), '[^A-Za-z0-9]', '') <> ''
+      -- claim whose code is missing (mdv_code_sql).
+      AND {mdv_code_sql('code')} IS NOT NULL
   "))
   # A code type no source produces is a rule that cannot fire. Every other named
   # thing in this package stops the run when it matches nothing - the belantamab

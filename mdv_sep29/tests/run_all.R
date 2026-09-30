@@ -6,8 +6,9 @@
 # The list is written out rather than discovered: a suite that disappears is a
 # failure here, not a smaller green.
 #
-# A suite that skips (python3 without duckdb and sqlglot) proved nothing, and
-# counts against the run.
+# A suite that skips (python3 without duckdb and sqlglot, or without pyspark
+# and Java for the Spark suite) proved nothing, and counts against the run.
+# SPARK_PYTHON names the python that has pyspark, where it is not python3.
 
 HERE <- local({
   a <- grep("^--file=", commandArgs(FALSE), value = TRUE)
@@ -23,7 +24,8 @@ SUITES <- c(
   "lot/engine/tests/test_runner.R",
   "lot/engine/tests/test_line_criteria.R",
   "lot/engine/tests/test_mdv_extract.R",
-  "lot/validation/tests/test_vignettes.R")
+  "lot/validation/tests/test_vignettes.R",
+  "tests/test_spark_sql.R")
 
 bad <- 0L; total <- 0L
 for (s in SUITES) {

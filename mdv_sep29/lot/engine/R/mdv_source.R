@@ -147,14 +147,18 @@ check_mdv_settings <- function() {
 }
 
 # ---- table names ------------------------------------------------------------
-# The vintage suffix. MDV_VINTAGE names it outright (2026q2); blank derives it
-# from STUDY_END the way the Optum build does. They are kept apart because the
-# MDV extract can be a quarter later than the study window, and the window is
-# the study's while the vintage is the data's.
+# The vintage suffix: MDV_VINTAGE, always named outright (2026q2), never
+# derived from STUDY_END. The MDV extract can be a quarter later than the study
+# window - the window is the study's, the vintage is the data's - and a
+# derivation reached only when the setting arrived blank depended on whether
+# the variable was unset or set empty, which the loader treats alike. Blank
+# takes the default in config.R / config_lot.R, so a blank here is a fault.
 mdv_vintage <- function(cfg) {
-  v <- trimws(cfg$mdv_vintage %||% "")
-  if (nzchar(v)) return(tolower(v))
-  get_quarter_suffix(cfg$study_end)
+  v <- tolower(trimws(cfg$mdv_vintage %||% ""))
+  if (!nzchar(v))
+    stop("MDV_VINTAGE is blank. Name the MDV extract's quarter, e.g. 2026q2; ",
+         "it is never derived from STUDY_END.", call. = FALSE)
+  v
 }
 
 mdv_tbl <- function(key, cfg = mdv_config()) {
@@ -180,12 +184,21 @@ mdv_config <- function() {
 mdv_digits_sql <- function(expr)
   paste0("regexp_replace(coalesce(cast(", expr, " as string), ''), '[^0-9]', '')")
 
+# Eight digits, yyyyMMdd, as a date - or NULL where they are not a calendar
+# date (20200230, 00000000, 20201301). to_date() raises on those under ANSI
+# mode, Databricks SQL's default, so one malformed record would stop the run;
+# try_to_timestamp() returns NULL instead (Spark 3.5+, Databricks Runtime
+# 11.3+). tests/test_spark_sql.R runs this in Spark itself.
+mdv_ymd_sql <- function(s)
+  paste0("cast(try_to_timestamp(", s, ", 'yyyyMMdd') as date)")
+
 # A day-level date from a DATE, a TIMESTAMP, yyyyMMdd as a number or a string,
-# or yyyy-MM-dd. Anything with fewer than eight digits is NULL, not a guess.
+# or yyyy-MM-dd. Anything with fewer than eight digits, or that is not a
+# calendar date, is NULL, not a guess.
 mdv_date_sql <- function(expr) {
   d <- mdv_digits_sql(expr)
-  paste0("(CASE WHEN ", d, " RLIKE '^[0-9]{8}' THEN to_date(substr(", d,
-         ", 1, 8), 'yyyyMMdd') END)")
+  paste0("(CASE WHEN ", d, " RLIKE '^[0-9]{8}' THEN ",
+         mdv_ymd_sql(paste0("substr(", d, ", 1, 8)")), " END)")
 }
 
 # The first day of a claim month, from yyyyMM, yyyy-MM, or any full date. The
@@ -193,14 +206,19 @@ mdv_date_sql <- function(expr) {
 # datamonth), and so does every diagnosis rule here.
 mdv_month_sql <- function(expr) {
   d <- mdv_digits_sql(expr)
-  paste0("(CASE WHEN ", d, " RLIKE '^[0-9]{6}' THEN to_date(concat(substr(",
-         d, ", 1, 6), '01'), 'yyyyMMdd') END)")
+  paste0("(CASE WHEN ", d, " RLIKE '^[0-9]{6}' THEN ",
+         mdv_ymd_sql(paste0("concat(substr(", d, ", 1, 6), '01')")), " END)")
 }
 
-# A code, the way every code list here is normalised: trimmed, punctuation
-# gone, letters upper-cased. C90.0 and C900 are one code.
+# A code, the way every code here is normalised - on the MDV tables and on the
+# code lists alike: trimmed, punctuation gone, letters upper-cased, so C90.0 and
+# C900 are one code. And NULL where nothing is left. An empty key is not a
+# code: '' equals '', so a receipt code of '--' in the drug master would meet
+# every act whose code is blank, and a blank ICD-10 mapping would meet every
+# other blank one. NULL joins nothing.
 mdv_code_sql <- function(expr)
-  paste0("upper(regexp_replace(trim(cast(", expr, " as string)), '[^A-Za-z0-9]', ''))")
+  paste0("nullif(upper(regexp_replace(trim(cast(", expr,
+         " as string)), '[^A-Za-z0-9]', '')), '')")
 
 # A value compared with one of MDV_VALUES, as text.
 mdv_is_sql <- function(expr, value)
@@ -256,6 +274,10 @@ mdv_dx_select <- function() {
 #   ACT_DT       the act's date
 #   RECEIPTCODE  the receipt code, normalised
 #   INPT         1 inpatient, 0 outpatient, NULL where the delivery does not say
+#                - or says with a value that is neither code (SETTING_RAW)
+#   SETTING_RAW  the care-setting value as text; NULL only where the column is
+#                declared NONE. Kept so a value neither MDV_INPATIENT nor
+#                MDV_OUTPATIENT can be told from a column the delivery lacks.
 #   ACT_DAYS     days supplied where the delivery carries it, else NULL
 mdv_act_select <- function() {
   c <- MDV_COLS; v <- MDV_VALUES
@@ -263,6 +285,9 @@ mdv_act_select <- function() {
     paste0("CASE WHEN ", mdv_is_sql(paste0("a.", c$act_nyugaikbn), v$inpatient),
            " THEN 1 WHEN ", mdv_is_sql(paste0("a.", c$act_nyugaikbn), v$outpatient),
            " THEN 0 END") else "cast(NULL as int)"
+  raw <- if (nzchar(c$act_nyugaikbn))
+    paste0("coalesce(trim(cast(a.", c$act_nyugaikbn, " as string)), '<null>')")
+  else "cast(NULL as string)"
   days <- if (nzchar(c$act_days))
     paste0("cast(a.", c$act_days, " as int)") else "cast(NULL as int)"
   paste0("
@@ -270,6 +295,7 @@ mdv_act_select <- function() {
            ", mdv_date_sql(paste0("a.", c$actdate)), " AS ACT_DT,
            ", mdv_code_sql(paste0("a.", c$receiptcode)), " AS RECEIPTCODE,
            ", inpt, " AS INPT,
+           ", raw, " AS SETTING_RAW,
            ", days, " AS ACT_DAYS
     FROM ", mdv_tbl("act"), " a")
 }
@@ -281,7 +307,7 @@ mdv_drug_select <- function() {
 ", "    SELECT DISTINCT ", mdv_code_sql(paste0("m.", c$receiptcode)), " AS RECEIPTCODE,
            lower(trim(cast(m.", c$receiptname_eng, " as string))) AS NAME_ENG
     FROM ", mdv_tbl("drug"), " m
-    WHERE m.", c$receiptcode, " IS NOT NULL")
+    WHERE ", mdv_code_sql(paste0("m.", c$receiptcode)), " IS NOT NULL")
 }
 
 # Demographics. GDR_CD is M, F or U, the way the Optum cohort carries it, so

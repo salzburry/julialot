@@ -156,7 +156,10 @@ On MDV the route on the code list decides which a drug act is. An `INJ` act is
 a medical claim: it covers `medical_day_supply`. An `ORAL` act is a pharmacy
 fill: it covers its own days supplied where the delivery has that column; 1
 day on an inpatient act without one, since DPC records inpatient drugs day by
-day; and `oral_days_default` on an outpatient act without one.
+day; and `oral_days_default` on an outpatient act without one. An act without
+days whose care setting is neither code stops the run: it cannot be sized, and
+sizing it as outpatient would give an inpatient day 28. Declaring the setting
+column `NONE` sizes every such act at `oral_days_default`, on purpose.
 
 ### 2.3 A claim arriving while cover is live extends the episode
 

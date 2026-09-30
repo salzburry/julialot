@@ -81,7 +81,7 @@ w3 <- pin_study_window(modifyList(base, list(study_end = "2025-06-30")),
 ok(identical(w3$study_end, "2026-03-31"),
    "an argument beats the configured value, so a run need not edit config.csv")
 # check_settings() only sees the environment, so an argument has to be checked
-# here or a command-line date reaches get_quarter_suffix() unvalidated.
+# here or a command-line date reaches the window unvalidated.
 stops(pin_study_window(base, "2016-01-01", "30-06-2025"),
       "an Excel-reformatted date passed as an argument")
 stops(pin_study_window(base, "2016-01-01", "2026-13-31"),
@@ -1921,59 +1921,20 @@ ok(!any(c("INPUT_COHORT_TABLE", "OBJECT_PREFIX") %in% names(bundled)),
    "config.csv does not name a cohort")
 
 cat("\n-- the vintage every read hits --\n")
-# get_quarter_suffix decides which quarterly tables the whole study reads, via
-# cdm_src. CONTRACT pins STUDY_END, but not the arithmetic that turns it into a
-# table name: an off-by-one quarter names t_medical_2025q1, which exists, so it
-# would read real data from the wrong vintage and nothing would say so.
-qe <- new.env(parent = globalenv())
-sys.source(file.path(ROOT, "R", "db_utils_lot.R"), envir = qe)
-assign("log_msg", function(...) invisible(NULL), envir = qe)
-QCFG <- list(catalog = "hive_metastore", cdm_schema = "clnprw_optum",
-             use_quarterly_tables = TRUE, study_end = "2025-06-30")
-assign("lot_config", function() QCFG, envir = qe)
-# Derived a different way than the code does - (m + 2) %/% 3 against its
-# ceiling(m / 3) - so this is a second opinion, not a restatement.
-want_q <- function(d) {
-  dt <- as.Date(d)
-  sprintf("%sq%d", format(dt, "%Y"), (as.integer(format(dt, "%m")) + 2L) %/% 3L)
-}
-# Every call goes through this, so a get_quarter_suffix() that stops is a
-# failed assertion rather than the end of the run.
-qs <- function(x) tryCatch(qe$get_quarter_suffix(x),
-                           error = function(e) paste("stopped:", conditionMessage(e)))
-months <- sprintf("2025-%02d-15", 1:12)
-got  <- vapply(months, qs, character(1), USE.NAMES = FALSE)
-ok(identical(got, vapply(months, want_q, character(1), USE.NAMES = FALSE)),
-   paste0("every month lands in the right quarter (", paste(unique(got), collapse = " "), ")"))
-# The boundaries are where an off-by-one shows: 03-31 and 04-01 must differ.
-ok(identical(qs("2025-03-31"), "2025q1") && identical(qs("2025-04-01"), "2025q2") &&
-     identical(qs("2025-12-31"), "2025q4"),
-   "and the quarter boundaries fall between the months, not across them")
-ok(identical(qs("2024-09-30"), "2024q3"),
-   "the year comes from the date, not from today")
-# config.csv's value, not a CONTRACT entry - the window is passed per run now.
-# `loaded` is that file read the way build.R reads it, so this is the vintage a
-# production run hits when the caller passes no window of its own.
-ok(identical(qs(loaded$study_end), want_q(loaded$study_end)),
-   paste0("the configured STUDY_END resolves to ", want_q(loaded$study_end)))
-# as.Date("30-06-2025") does not fail - it returns year 0030. The year < 1900
-# guard turns that into a stop. Non-ISO layouts are normalized (or refused)
-# upstream by load_inputs / pin_study_window, so here they are simply errors.
-ok(grepl("stopped:", qs("30-06-2025"), fixed = TRUE),
-   "an Excel-reformatted date stops rather than reading as the year 30")
+# The config loader normalises an Excel-reformatted STUDY_END, and refuses an
+# ambiguous one, before it reaches the settings.
 lni <- new.env(parent = globalenv())
 sys.source(file.path(ROOT, "R", "load_inputs.R"), envir = lni)
 ok(inherits(tryCatch(suppressMessages(lni$.normalize_iso_date("03/04/2025", "STUDY_END")),
                      error = function(e) e), "error"),
-   "and the config loader refuses it too, before it reaches the settings")
+   "the config loader refuses an ambiguous date before it reaches the settings")
 ok(identical(suppressMessages(lni$.normalize_iso_date("30-06-2025", "STUDY_END")),
              "2025-06-30"),
    "...while an unambiguous Excel date still normalizes")
-msg <- tryCatch({ qe$get_quarter_suffix("nonsense"); "" }, error = conditionMessage)
-ok(grepl("STUDY_END", msg, fixed = TRUE) && grepl("YYYY-MM-DD", msg, fixed = TRUE),
-   "a date it cannot parse stops the build, naming the setting and the format")
-# The consumer, on MDV: mdv_tbl(). MDV_VINTAGE names the extract outright,
-# and only when it is blank does STUDY_END's quarter stand in for it.
+# mdv_tbl() names the MDV extract's own vintage. It is never derived from
+# STUDY_END: that path was reached only when the setting arrived blank, which
+# depended on whether the variable was unset or set empty.
+qe <- new.env(parent = globalenv())
 sys.source(file.path(ROOT, "R", "mdv_source.R"), envir = qe)
 MCFG <- list(catalog = "hive_metastore", cdm_schema = "clnprw_mdv_all_use",
              use_quarterly_tables = TRUE, study_end = "2025-06-30",
@@ -1981,8 +1942,35 @@ MCFG <- list(catalog = "hive_metastore", cdm_schema = "clnprw_mdv_all_use",
 ok(identical(qe$mdv_tbl("act", MCFG), "hive_metastore.clnprw_mdv_all_use.t_actdata_2026q2"),
    "mdv_tbl names the MDV extract's own vintage, not STUDY_END's quarter")
 MCFG$mdv_vintage <- ""
-ok(identical(qe$mdv_tbl("act", MCFG), "hive_metastore.clnprw_mdv_all_use.t_actdata_2025q2"),
-   "...falls back to STUDY_END's quarter when MDV_VINTAGE is blank")
+ok(grepl("never derived from STUDY_END", tryCatch({ qe$mdv_tbl("act", MCFG); "" },
+                                                  error = conditionMessage), fixed = TRUE),
+   "...and a blank vintage reaching it is refused, not replaced by STUDY_END's quarter")
+# Through the real loader: a config.csv with a blank MDV_VINTAGE and a
+# STUDY_END in another quarter takes the default, whether the variable is
+# unset or set empty.
+local({
+  vars <- c("MDV_VINTAGE", "STUDY_END")
+  saved <- Sys.getenv(vars, unset = NA)
+  on.exit(for (v in vars) if (is.na(saved[[v]])) Sys.unsetenv(v)
+                          else do.call(Sys.setenv, setNames(list(saved[[v]]), v)))
+  d <- file.path(tempdir(), "vintage_cfg"); dir.create(d, showWarnings = FALSE)
+  writeLines(c("name,value,description", "MDV_VINTAGE,,blank",
+               "STUDY_END,2025-09-30,another quarter"), file.path(d, "config.csv"))
+  vint <- function() {
+    suppressMessages(lni$load_pipeline_inputs(d, "config.csv"))
+    e <- new.env(parent = globalenv())
+    sys.source(file.path(ROOT, "R", "config_lot.R"), envir = e)
+    e$cfg_defaults$mdv_vintage
+  }
+  Sys.unsetenv(vars)
+  v1 <- vint()
+  Sys.unsetenv("STUDY_END"); Sys.setenv(MDV_VINTAGE = "")
+  v2 <- vint()
+  ok(identical(v1, "2026q2") && identical(v2, "2026q2"),
+     paste0("a blank MDV_VINTAGE through the real loader is the default, unset (", v1,
+            ") or set empty (", v2, "), never STUDY_END's 2025q3"))
+  unlink(d, recursive = TRUE)
+})
 MCFG$use_quarterly_tables <- FALSE
 ok(identical(qe$mdv_tbl("act", MCFG), "hive_metastore.clnprw_mdv_all_use.actdata"),
    "...and reads the plain table when quarterly tables are off")

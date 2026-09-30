@@ -33,13 +33,16 @@ build_ndmm_mm_dx_codes <- function(con) {
     SELECT DISTINCT code_type, code, icd10,
            CASE WHEN icd10 LIKE 'C900%' THEN 1 ELSE 0 END AS strict
     FROM (
+      -- Each column normalised before the fallback, so a blank or
+      -- punctuation-only icd10 is NULL and an ICD10 row falls back to its own
+      -- code. Coalescing first kept the blank, which graded the row not strict.
       SELECT upper(trim(code_type)) AS code_type,
-             upper(regexp_replace(trim(code), '[^A-Za-z0-9]', '')) AS code,
-             upper(regexp_replace(trim(coalesce(icd10,
-                     CASE WHEN upper(trim(code_type)) = 'ICD10' THEN code END)),
-                   '[^A-Za-z0-9]', '')) AS icd10
+             {mdv_code_sql('code')} AS code,
+             coalesce({mdv_code_sql('icd10')},
+                      CASE WHEN upper(trim(code_type)) = 'ICD10'
+                           THEN {mdv_code_sql('code')} END) AS icd10
       FROM {src}
-      WHERE code IS NOT NULL AND regexp_replace(code, '[^A-Za-z0-9]', '') <> ''
+      WHERE {mdv_code_sql('code')} IS NOT NULL
     ) c
   "))
 }
@@ -210,10 +213,17 @@ build_ndmm_demographics <- function(con) {
   # date, so moving it would publish a date no record carries. A death before
   # the 1L start fails criterion 5 instead (06_flags.R), and every act after a
   # recorded death is listed in NDMM_DEATH_CONFLICTS (DECISIONS M12).
+  #
+  # With more than one death-coded discharge, the EARLIEST is the death. A
+  # patient dies once, so a later death-coded discharge is itself a record
+  # after the death - a conflict NDMM_DEATH_CONFLICTS lists with every date -
+  # and not a later death. Taking the latest let the later record hide the
+  # earlier one: dead on 12 June, treated on 15 June, "dead" again on 20 June
+  # read as alive at the index and no conflict at all.
   db_exec(con, glue("
     CREATE OR REPLACE TEMPORARY VIEW {NDMM_DEATH_DT} AS
     WITH died AS (
-      SELECT PATID, max(FF1_END_DT) AS death_raw
+      SELECT PATID, min(FF1_END_DT) AS death_raw
       FROM {NDMM_FF1}
       WHERE DIED = 1 AND FF1_END_DT IS NOT NULL
       GROUP BY PATID

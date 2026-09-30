@@ -120,7 +120,7 @@ mdv_fixture <- function() {
   # P11 out at 7: inpatient breast cancer in the baseline.
   P("P11", 2, 196011)
   A("P11", "2018-10-01", APAP)
-  DX("P11", 201909, BREAST, inout = 2)
+  DX("P11", 201909, BREAST, inout = 2, icd = "C50.9")
   DX("P11", 201911, MM); DX("P11", 201912, MM)
   A("P11", "2020-01-10", BORT)
 
@@ -139,6 +139,10 @@ mdv_fixture <- function() {
   DX("P13", 201912, MM); DX("P13", 202001, MM)
   A("P13", "2020-02-15", BORT)
   A("P13", "2021-01-15", ALLO, inout = 2)
+  # An act whose receipt code is blank once normalised. The drug master below
+  # carries two such codes, named melphalan and a CAR-T: an empty key must
+  # join nothing, so P13 has neither a melphalan act nor a CAR-T here.
+  A("P13", "2021-03-01", " ", inout = 2)
 
   # P14 out at 8: a delivery (an act) in 2018.
   P("P14", 2, 198514)
@@ -225,6 +229,10 @@ mdv_fixture <- function() {
   DX("P25", 202004, MM); DX("P25", 202005, MM)
   F1("P25", "2020-06-01", "2020-06-12", outcome = 6)
   A("P25", "2020-06-15", BORT)
+  # ...and a second death-coded discharge on 2020-06-20. The earliest is the
+  # death; the later one is a conflict of its own, and must not hide the act
+  # on the 15th by reading as her death.
+  F1("P25", "2020-06-16", "2020-06-20", outcome = 6)
 
   # P26 out at 3: his only drug on the MM list is dexamethasone, spelled
   # ' DEX ' there. A steroid cannot set the index.
@@ -252,7 +260,11 @@ mdv_fixture <- function() {
     list(receiptcode = DEX,    receiptname_eng = "Dexamethasone Tablets 4mg"),
     list(receiptcode = MELP,   receiptname_eng = "Melphalan for Injection 50mg"),
     list(receiptcode = IDECEL, receiptname_eng = "Idecabtagene Vicleucel Suspension"),
-    list(receiptcode = PANO,   receiptname_eng = "Panobinostat Lactate Capsules 10mg"))
+    list(receiptcode = PANO,   receiptname_eng = "Panobinostat Lactate Capsules 10mg"),
+    # Receipt codes that normalise to nothing, named like real drugs. Neither
+    # is a code: a pattern finding only these has found nothing.
+    list(receiptcode = "--",   receiptname_eng = "Melphalan for Injection 50mg"),
+    list(receiptcode = "-",    receiptname_eng = "Idecabtagene Vicleucel Suspension"))
   list(patient = do.call(rbind, lapply(pat, as.data.frame, stringsAsFactors = FALSE)),
        disease = do.call(rbind, lapply(dx,  as.data.frame, stringsAsFactors = FALSE)),
        act     = do.call(rbind, lapply(act, as.data.frame, stringsAsFactors = FALSE)),

@@ -21,8 +21,9 @@ Three sources decide the MDV form of a rule:
   meets the LOT engine: drug vocabulary, observation, and day supply.
 
 Anything none of the three settles is marked **(confirm)**. It has a default
-and a named setting, and the build checks it against the warehouse before it
-reads a row. No real MDV data has been read in writing this; see "What was
+and a named setting. The build asks the warehouse for every configured column
+by name before anything is written, and profiles the value codes once the MM
+records are found (below). No real MDV data has been read in writing this; see "What was
 tested".
 
 ---
@@ -57,21 +58,36 @@ because the settings loader fills a blank variable from `config.csv`.
 | `sex` female / male | `2` / `1` | female by the OC rules; male **(confirm)** |
 
 The tables are read as `t_<name>_<vintage>` with `MDV_VINTAGE=2026q2`, the
-suffix the OC rules use. The vintage is a setting of its own rather than being
-derived from `STUDY_END`, because the study window (to 2026-03-31, the same as
-the Optum cohort) and the MDV extract (2026q2) are different quarters.
+suffix the OC rules use. The vintage is always named, never derived from
+`STUDY_END`: the study window (to 2026-03-31, the same as the Optum cohort) and
+the MDV extract (2026q2) are different quarters, and a blank `MDV_VINTAGE`
+takes the default like every other setting.
 
-Two checks run before any rule reads a row:
+**How a value is read.** Every code - on the MDV tables and on the code lists
+- is trimmed, stripped of punctuation and upper-cased, and a code that leaves
+nothing is `NULL`, which joins nothing: a drug-master receipt code of `--`
+cannot meet an act whose code is blank, and a blank ICD-10 mapping cannot
+meet another. A code list's `icd10` is normalised before it falls back to the
+row's own code. A date that is not a calendar date (`20200230`, `00000000`) is
+`NULL`, not an error: `to_date()` raises on it under ANSI mode, Databricks
+SQL's default, and one malformed record would stop the run.
 
-- **The columns exist.** Every configured column is looked for with
-  `DESCRIBE`. A missing one stops the run and names the table and column
-  (`check_upstream` in the cohort, `check_mdv_source` in LOT).
-- **The value codes match.** On the MM diagnosis records and the MM therapy
-  acts, the cohort build counts every value of `nyugaikbn`, `utagaiflg` and
-  `cancerflg`, and whether `datamonth` and `actdate` could be read. It writes
-  the counts to `NDMM_MDV_SOURCE_PROFILE`. If a configured code matches no
-  record, or no date could be read, the run stops. A wrong code does not fail
-  on its own; it silently matches nothing (`check_mdv_values`).
+Two checks guard the source, at two points:
+
+- **The columns exist**, before anything is written. Every configured column
+  is looked for with `DESCRIBE`. A missing one stops the run and names the
+  table and column (`check_upstream` in the cohort, `check_mdv_source` in LOT).
+- **The value codes match**, once the MM diagnosis records and MM therapy acts
+  are found - after criteria 1 and 2 are staged, before the 1L index and the
+  criteria that follow it. The cohort build counts every value of `nyugaikbn`,
+  `utagaiflg` and `cancerflg` and the acts' care setting, and whether
+  `datamonth` and `actdate` could be read, into `NDMM_MDV_SOURCE_PROFILE`. If a
+  configured code matches no record, or no date could be read, the run stops.
+  A wrong code does not fail on its own; it silently matches nothing
+  (`check_mdv_values`). An act care-setting value that neither code reads is
+  shown as `unrecognized` and recorded as the finding
+  `act_setting_unrecognized`; the cohort reads no act's setting, but the LOT
+  engine refuses such an oral act rather than size it as outpatient.
 
 These replace the Optum build's NDC-shape and ICD_FLAG checks, which have
 nothing to check on MDV: receipt codes are not padded, and there is one ICD
@@ -140,7 +156,7 @@ pays for an investigational drug, so it does not reach the claim at all.
 | A diagnosis is dated to the **first day of its claim month** | MDV dates a diagnosis only to its claim month. The OC rules use `diagnosis_date = first calendar day of datamonth`. |
 | "Different days within N days" becomes **different claim months at most M months apart** (90 days → 3 months; 30 days → adjacent months) | Month-level dates cannot say "different days". Counted in calendar months, not `days / 30.44`. The OC rules' `gap_months = (datamonth - previous) / 30.44 >= 1` reads February 1 to March 1 (28 days, 0.92) as less than a month apart, so it would reject two consecutive months. |
 | The patient key is **the hospital's** | MDV issues one ID per patient per hospital. A patient treated at two contributing hospitals is two patients, each observed at one. |
-| A death is kept **as recorded**; a 1L start after it fails criterion 5, and every act after a death is listed (`NDMM_DEATH_CONFLICTS`) | The FF1 discharge date is exact. The Optum build clamped a death before the index to the index, which on MDV publishes a date no record carries and keeps a patient whose treatment contradicts it. |
+| A death is kept **as recorded**, and with two death-coded discharges the **earliest** is the death; a 1L start after it fails criterion 5, and every record after a death - an act, or a second death date - is listed (`NDMM_DEATH_CONFLICTS`) | The FF1 discharge date is exact. The Optum build clamped a death before the index to the index, which on MDV publishes a date no record carries and keeps a patient whose treatment contradicts it. Taking the latest of two death dates let the later one hide an act after the first. |
 | Panobinostat and elotuzumab are barred from the 1L index **in the cohort's contract** (`PANO\|ELOT`) | On Optum the study package refuses a cohort built without the bar. Nothing reads the MDV cohort yet, so the cohort build holds itself to protocol I3. |
 
 ---
@@ -185,9 +201,10 @@ The rule settings above, and the source's identity (`MDV_SCHEMA`,
 `MDV_VINTAGE`, `CODELIST_DIR`), are pinned in `CONTRACT` in
 `lot/engine/R/build_lot.R`, as on Optum. The table, column and value mappings
 (`MDV_TBL_*`, `MDV_COL_*`, the value codes) are not pinned: they describe the
-delivery rather than the study. Each is checked before anything is written -
-held to identifier shape, and every column asked for by name from the
-warehouse - and recorded on every run as `MDV_SOURCE`, in `NDMM_RUN_METADATA`
+delivery rather than the study. Each is held to identifier shape and every
+column is asked for by name from the warehouse, before anything is written;
+the value codes are profiled once the records are found (section 1). All are
+recorded on every run as `MDV_SOURCE`, in `NDMM_RUN_METADATA`
 and `LOT_RUN_METADATA` alike, so two extractions that differ only in a column
 name are told apart.
 
@@ -221,9 +238,11 @@ named here so it is decided on purpose.
 6. **Death.** Only in-hospital deaths (FF1 discharge outcome) are seen, and
    the outcome column's name is (confirm). With `CENSOR_AT_DISENROLLMENT=TRUE`
    most follow-up ends at the last record anyway. A 1L start after a recorded
-   death fails criterion 5 (the default); the alternatives - dropping the
+   death fails criterion 5 (the default), and with two death-coded
+   discharges the earliest is the death; the alternatives - dropping the
    death, or the contradicting acts - are the study team's, and
-   `NDMM_DEATH_CONFLICTS` counts the patients each would affect.
+   `NDMM_DEATH_CONFLICTS` counts the patients each would affect, with every
+   death date.
 7. **Day supply.** PORTING.md: "Run the whole build at two or three values, as
    sensitivity builds, before choosing." Suggested: `MEDICAL_DAY_SUPPLY` 21,
    28, 35, each as its own prefix with `LOT_CONTRACT_OVERRIDE=TRUE`. Whether
@@ -244,7 +263,14 @@ named here so it is decided on purpose.
     said "straddles", which would date a window wholly past the mark at its
     last claim instead. Past the mark the pair is excess either way; only the
     date the line ends moves. Vignettes `auto_seam_straddle`,
-    `auto_seam_after` and `auto_seam_far`, marked to confirm.
+    `auto_seam_after` and `auto_seam_far`, marked to confirm; run in Spark by
+    `tests/test_spark_sql.R`.
+12. **Which ICD-10.** MDV carries Japan's ICD-10 (four characters; myeloma is
+    C90.0). The inherited Optum lists are US ICD-10-CM, whose remission fifth
+    characters (C90.00, C90.01, C90.02) and C7B do not exist in Japan's
+    classification. `icd10` mappings should be written in Japan's codes, and
+    the MDV disease code crosswalk validated against MDV's dictionary
+    (`codelists/README.md`, "Which ICD-10").
 
 **Before the first run, confirm against the MDV data dictionary:** the
 birth-year column; the FF1 discharge-outcome column and its death codes;
@@ -281,26 +307,31 @@ account can reach (`reference/README.md`).
 
 No real MDV data was read. The suites run the builds' own emitted SQL,
 transpiled from Spark to DuckDB with sqlglot, against 26 synthetic patients
-with invented codes (`tests/fixture_mdv.R`). Each patient exists to exercise
-one rule. Each fix below was first shown to fail on the code before it.
+with invented codes (`tests/fixture_mdv.R`), and one suite runs the SQL where
+the two engines differ in Spark itself. Each patient exists to exercise one
+rule. Each fix below was first shown to fail on the code before it.
 
 | suite | what it runs | result |
 |---|---|---|
-| `ndmm/tests/test_mdv_build.R` | the whole cohort build, unchanged, against the synthetic tables. It checks every attrition count, the ten cohort members and their index and diagnosis dates, death, `ENDDATE_CE`, criterion 1 under each reading, the resolved code list, the belantamab list, the trial flag, the metadata; the bar on panobinostat; a death kept as recorded, the act after it listed and the patient out at criterion 5; dexamethasone (spelled `' DEX '`) neither indexing nor excluding; then the OC inpatient rule; a 90-day follow-up window capped at death, in criterion 5 and the final check alike; an act table with no care-setting column, refused at its default and built when declared `NONE`; and that a wrong value code and a wrong column name each stop the run | 76 / 76 |
-| `lot/engine/tests/test_mdv_extract.R` | the cohort build, then the LOT engine's preflight, code lists, drug extraction and transplant extraction on that cohort. It checks INJ/ORAL supply, inpatient days, the default without a days column, the name-pattern drugs, CAR-T by name, and the fatal route check; that waiving `uncoded_meds` leaves `unresolved_names` standing; that a misspelt SCT name pattern stops the build unless waived; and that a sensitivity build under its own prefix needs `COHORT_PREFIX` | 30 / 30 |
-| `ndmm/tests/test_runner.R` | the Optum cohort runner suite, carried over, with its Optum-only tests replaced by MDV ones; and how an optional column is declared `NONE` | 413 / 413 |
-| `lot/engine/tests/test_runner.R`, `test_line_criteria.R` | the Optum LOT runner and criteria suites, the same way; and that the run records its MDV mappings and checks its MDV columns before writing | 535 / 535, 59 / 59 |
+| `ndmm/tests/test_mdv_build.R` | the whole cohort build, unchanged, against the synthetic tables. It checks every attrition count, the eleven cohort members and their index and diagnosis dates, death, `ENDDATE_CE`, criterion 1 under each reading, the resolved code list, the belantamab list, the trial flag, the metadata; the bar on panobinostat; a death kept as recorded, the act after it listed and the patient out at criterion 5; dexamethasone (spelled `' DEX '`) neither indexing nor excluding; then the OC inpatient rule; a 90-day follow-up window capped at death, in criterion 5 and the final check alike; an act table with no care-setting column, refused at its default and built when declared `NONE`; act care-setting values neither code reads, shown as unrecognized and recorded as a finding; blank or punctuation-only receipt codes resolving to nothing; a second death-coded discharge listed rather than read as the death; blank ICD-10 mappings on an MM and an other-cancer row, which neither drop a myeloma patient nor pass breast cancer off as myeloma; panobinostat reported barred when its pattern finds no drug; and that a wrong value code and a wrong column name each stop the run | 86 / 86 |
+| `lot/engine/tests/test_mdv_extract.R` | the cohort build, then the LOT engine's preflight, code lists, drug extraction and transplant extraction on that cohort. It checks INJ/ORAL supply, inpatient days, the default without a days column, the name-pattern drugs, CAR-T by name, and the fatal route check; that waiving `uncoded_meds` leaves `unresolved_names` standing; that a misspelt SCT name pattern stops the build unless waived; that a sensitivity build under its own prefix needs `COHORT_PREFIX`; that a blank-coded act makes neither a melphalan act nor a CAR-T; and that an oral act whose care setting neither code reads stops the run, until the column is declared `NONE` | 34 / 34 |
+| `ndmm/tests/test_runner.R` | the Optum cohort runner suite, carried over, with its Optum-only tests replaced by MDV ones; how an optional column is declared `NONE`; and a blank `MDV_VINTAGE` through the real loader | 415 / 415 |
+| `lot/engine/tests/test_runner.R`, `test_line_criteria.R` | the Optum LOT runner and criteria suites, the same way; that the run records its MDV mappings and checks its MDV columns before writing; and a blank `MDV_VINTAGE` through the real loader | 530 / 530, 59 / 59 |
 | `lot/validation/tests/test_vignettes.R` | the rule vignettes, carried over unchanged: every setting a case derives from exists in the MDV engine's config, the boundary pairs straddle it, every source line a case quotes is still in this folder's engine, and `lot/LOT_RULES.md` and the catalogue cite each other | 38 / 38 |
+| `tests/test_spark_sql.R` | the builds' own SQL in local Spark 4.0 with ANSI mode on, no translation: a control showing plain `to_date()` raises there; the date helpers returning `NULL` for `20200230`, `00000000`, month 13; blank code keys as `NULL` that never join; and the engine's AUTO clustering statement (Spark `aggregate()`) on the tandem-mark cases, the review's `[0, 181, 190]` trace among them | 16 / 16 |
 
-`tests/run_all.R` runs all six.
+`tests/run_all.R` runs all seven. The Spark suite needs `pyspark` and a Java
+runtime (`SPARK_PYTHON` names the python that has pyspark).
 
-**Not executed by any suite here:** the LOT line assembly, from the MAP state
-machine and the SCT clustering onward. Both use Spark higher-order functions
-(`aggregate` with a finish lambda) that DuckDB cannot run through sqlglot. That
-code is the Optum engine's, unchanged (`lot/README.md` lists the files that
-did change); the suites here check its settings, its declared outputs and the
-rules it cites, not the rows it returns. Its first execution on MDV output is
-the first warehouse run.
+**Not executed by any suite here:** the LOT line assembly as a whole - the
+MAP state machine and everything after it. The MAP uses Spark `aggregate()`
+with a finish lambda that DuckDB cannot run, and only the AUTO clustering
+statement is run in Spark so far (`tests/test_spark_sql.R`). That code is the
+Optum engine's, unchanged (`lot/README.md` lists the files that did change);
+the suites here check its settings, its declared outputs and the rules it
+cites, not the lines it returns. The next step is one small cohort-to-lines
+fixture run end to end in Spark; until then its first full execution on MDV
+output is the first warehouse run.
 
 Before any number is used, `lot/PORTING.md`'s last section applies to this port too.
 It needs its own planted cases on real data, its own face-validity bands, and

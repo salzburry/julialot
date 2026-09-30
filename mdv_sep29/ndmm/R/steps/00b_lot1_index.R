@@ -87,31 +87,36 @@ build_ndmm_belantamab_codes <- function(con) {
 # Resolved to receipt codes, because that is what the index scan joins on: an
 # agent named by abbreviation bars every receipt code its rows resolve to, and
 # a code bars that one receipt code however the list brought it in.
-build_ndmm_index_ineligible_codes <- function(con) {
-  split_setting <- function(x) {
-    v <- trimws(strsplit(x, "[,|]")[[1]])
-    v[nzchar(v)]
-  }
-  norm <- function(x) toupper(gsub("[^A-Za-z0-9]", "", x))
-  sq   <- function(x) gsub("'", "''", x, fixed = TRUE)
+ndmm_split_setting <- function(x) {
+  v <- trimws(strsplit(x, "[,|]")[[1]])
+  v[nzchar(v)]
+}
+ndmm_sq <- function(x) gsub("'", "''", x, fixed = TRUE)
 
-  abbrs <- split_setting(NDMM_INDEX_EXCLUDED_ABBRS)
-  codes <- split_setting(NDMM_INDEX_EXCLUDED_CODES)
+# The abbreviation half of the bar, one predicate per entry over a med_abbr
+# column: belantamab exactly, the way build_ndmm_belantamab_codes() and lot
+# both match it, then each NDMM_INDEX_EXCLUDED_ABBRS pattern, since a prefix is
+# useful in a hand-typed override. NDMM_INDEX_AGENTS reads the same list, so it
+# reports what the run barred - not only what the bar found receipt codes for.
+ndmm_index_abbr_terms <- function() {
+  c(list(list(what = paste0("abbreviation '", NDMM_BELANTAMAB_ABBR, "'"),
+              sql  = sprintf("upper(trim(med_abbr)) = '%s'",
+                             ndmm_sq(toupper(NDMM_BELANTAMAB_ABBR))),
+              on   = NDMM_MMA_CODELIST)),
+    lapply(ndmm_split_setting(NDMM_INDEX_EXCLUDED_ABBRS), function(a)
+      list(what = paste0("abbreviation pattern '", a, "'"),
+           sql  = sprintf("upper(trim(med_abbr)) LIKE '%s'", ndmm_sq(toupper(a))),
+           on   = NDMM_MMA_CODELIST)))
+}
+
+build_ndmm_index_ineligible_codes <- function(con) {
+  norm <- function(x) toupper(gsub("[^A-Za-z0-9]", "", x))
+  sq   <- ndmm_sq
+  codes <- ndmm_split_setting(NDMM_INDEX_EXCLUDED_CODES)
 
   # Each entry becomes one predicate over NDMM_MMA_RECEIPTS, and one thing to
-  # check matched something. Belantamab exactly, the way
-  # build_ndmm_belantamab_codes() and lot both match it; the operational
-  # entries stay patterns, since a prefix is useful in a hand-typed override.
-  terms <- list()
-  terms[[1L]] <- list(
-    what = paste0("abbreviation '", NDMM_BELANTAMAB_ABBR, "'"),
-    sql  = sprintf("upper(trim(med_abbr)) = '%s'", sq(toupper(NDMM_BELANTAMAB_ABBR))),
-    on   = NDMM_MMA_CODELIST)
-  for (a in abbrs)
-    terms[[length(terms) + 1L]] <- list(
-      what = paste0("abbreviation pattern '", a, "'"),
-      sql  = sprintf("upper(trim(med_abbr)) LIKE '%s'", sq(toupper(a))),
-      on   = NDMM_MMA_CODELIST)
+  # check matched something.
+  terms <- ndmm_index_abbr_terms()
   for (cd in codes) {
     parts <- strsplit(cd, ":", fixed = TRUE)[[1]]
     ty <- if (length(parts) >= 2L) toupper(trimws(parts[1])) else ""
@@ -201,16 +206,34 @@ build_ndmm_index_agents <- function(con, cfg) {
       FROM {NDMM_MMA_CODELIST} c
       WHERE c.med_abbr IS NOT NULL AND trim(c.med_abbr) <> ''
     ),
+    -- Barred by what the run was told, not by what the bar resolved to: an
+    -- agent named in the exclusions is ineligible whether or not its rows
+    -- found a receipt code, and a receipt code named outright bars its agent.
+    -- Read off receipts alone, a PANO pattern matching no drug reported PANO
+    -- eligible while the metadata said it was barred.
     barred AS (
-      SELECT DISTINCT upper(trim(r.med_abbr)) AS med_abbr
+      SELECT med_abbr FROM universe
+      WHERE {paste(vapply(ndmm_index_abbr_terms(), function(t) t$sql, character(1)),
+                   collapse = ' OR ')}
+      UNION
+      SELECT upper(trim(r.med_abbr)) AS med_abbr
       FROM {NDMM_MMA_RECEIPTS} r
       INNER JOIN {NDMM_INDEX_INELIGIBLE} i ON i.RECEIPTCODE = r.RECEIPTCODE
+    ),
+    -- Mapping coverage, reported apart from eligibility: how many receipt
+    -- codes each agent's rows resolved to.
+    coverage AS (
+      SELECT upper(trim(med_abbr)) AS med_abbr, count(DISTINCT RECEIPTCODE) AS n_codes
+      FROM {NDMM_MMA_RECEIPTS}
+      GROUP BY upper(trim(med_abbr))
     )
     SELECT u.med_abbr                              AS MED_ABBR,
            CASE WHEN b.med_abbr IS NULL THEN 1 ELSE 0 END AS ELIGIBLE,
+           coalesce(cv.n_codes, 0)                 AS N_RECEIPT_CODES,
            coalesce(n.N_PATIENTS, 0)               AS N_PATIENTS
     FROM universe u
     LEFT JOIN barred b ON b.med_abbr = u.med_abbr
+    LEFT JOIN coverage cv ON cv.med_abbr = u.med_abbr
     LEFT JOIN (SELECT coalesce(upper(trim(med_abbr)), '(none)') AS med_abbr,
                       count(DISTINCT PATID) AS N_PATIENTS
                FROM on_index
@@ -489,9 +512,10 @@ build_ndmm_belantamab_reconcile <- function(con, cfg) {
   invisible(got)
 }
 
-# Every MDV act after a recorded death, for review (DECISIONS M12). The death
-# date is the FF1 discharge date as recorded, and it is never moved: an act
-# after it is a contradiction in the data - a hospital recording against the
+# Every MDV record after a recorded death, for review (DECISIONS M12): an act
+# after it, or a second death-coded discharge. The death date is the earliest
+# FF1 death discharge as recorded, and it is never moved: a record after it is
+# a contradiction in the data - a hospital recording against the
 # wrong patient, a death code on the wrong discharge, or two hospitals'
 # records joined under one key - and nothing here can say which. So each
 # conflict is listed, not resolved.
@@ -507,6 +531,16 @@ build_ndmm_death_conflicts <- function(con, cfg) {
       SELECT cast(PATID as string) AS PATID, DEATH_DT
       FROM {NDMM_BASE_COHORT}
       WHERE DEATH_DT IS NOT NULL
+    ),
+    -- Every death-coded discharge, read before any aggregate: DEATH_DT is the
+    -- earliest (00_mm_cohort.R), and a second date is a conflict of its own.
+    deaths AS (
+      SELECT cast(f.PATID as string) AS PATID,
+             count(DISTINCT f.FF1_END_DT) AS n_dates, max(f.FF1_END_DT) AS last_dt
+      FROM {NDMM_FF1} f
+      INNER JOIN dead d ON d.PATID = cast(f.PATID as string)
+      WHERE f.DIED = 1 AND f.FF1_END_DT IS NOT NULL
+      GROUP BY cast(f.PATID as string)
     ),
     acts AS ({mdv_act_select()}
     ),
@@ -525,26 +559,32 @@ build_ndmm_death_conflicts <- function(con, cfg) {
     )
     SELECT d.PATID,
            d.DEATH_DT,
+           dt.n_dates                               AS N_DEATH_DATES,
+           dt.last_dt                               AS LAST_DEATH_DT,
            l1.LOT1_START_DT,
            CASE WHEN l1.LOT1_START_DT > d.DEATH_DT THEN 1 ELSE 0 END AS DEATH_BEFORE_INDEX,
-           af.n_acts                                AS N_ACTS_AFTER_DEATH,
+           coalesce(af.n_acts, 0)                   AS N_ACTS_AFTER_DEATH,
            coalesce(tx.n_tx, 0)                     AS N_MM_TX_AFTER_DEATH,
            af.first_dt                              AS FIRST_ACT_AFTER_DEATH,
            af.last_dt                               AS LAST_ACT_AFTER_DEATH,
            {sql_text(run_id)}                       AS RUN_ID
     FROM dead d
-    INNER JOIN after af ON af.PATID = d.PATID
+    INNER JOIN deaths dt ON dt.PATID = d.PATID
+    LEFT JOIN after af ON af.PATID = d.PATID
     LEFT JOIN tx ON tx.PATID = d.PATID
     LEFT JOIN (SELECT cast(PATID as string) AS PATID, min(LOT1_START_DT) AS LOT1_START_DT
                FROM {NDMM_LOT1_STARTS} GROUP BY cast(PATID as string)) l1
            ON l1.PATID = d.PATID
+    -- A conflict: an act after the death, or a second death-coded date.
+    WHERE af.PATID IS NOT NULL OR dt.n_dates > 1
     ORDER BY d.PATID"))
   got <- db_q(con, glue("
     SELECT count(*) AS n_pat, coalesce(sum(DEATH_BEFORE_INDEX), 0) AS n_before
     FROM {wrk('NDMM_DEATH_CONFLICTS')}"))
   if (isTRUE(got$n_pat > 0)) {
     log_msg("WARNING: ", format(got$n_pat, big.mark = ","), " patient(s) have MDV ",
-            "acts after their recorded death; ", format(got$n_before, big.mark = ","),
+            "records after their recorded death - acts, or a second death-coded ",
+            "discharge; ", format(got$n_before, big.mark = ","),
             " of them started 1L after it and fail criterion 5. The death dates ",
             "are kept as recorded -> ", wrk("NDMM_DEATH_CONFLICTS"))
     options(ndmm_findings = union(getOption("ndmm_findings", character(0)),

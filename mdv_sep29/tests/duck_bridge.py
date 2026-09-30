@@ -28,6 +28,7 @@ import datetime, os, re, socket, sys
 
 import duckdb
 import sqlglot
+from sqlglot import exp
 
 
 def load(con, fixture_dir):
@@ -47,6 +48,21 @@ ADD_COLUMNS = re.compile(r"ALTER\s+TABLE\s+(\S+)\s+ADD\s+COLUMNS\s*\((.*)\)\s*$"
                          re.I | re.S)
 
 
+def _try_to_timestamp(node):
+    # Spark's try_to_timestamp(s, 'yyyyMMdd') - NULL on a string that is not a
+    # calendar date - is DuckDB's try_strptime(s, '%Y%m%d'). sqlglot leaves it
+    # as a function DuckDB does not have. Only the one format the builds use
+    # is translated; any other stops the statement rather than guessing.
+    if isinstance(node, exp.Anonymous) and node.name.upper() == "TRY_TO_TIMESTAMP":
+        args = node.expressions
+        if len(args) == 2 and isinstance(args[1], exp.Literal) and args[1].this == "yyyyMMdd":
+            return exp.Anonymous(this="TRY_STRPTIME",
+                                 expressions=[args[0], exp.Literal.string("%Y%m%d")])
+        raise ValueError("duck_bridge: try_to_timestamp with a format it does not "
+                         "translate: " + node.sql())
+    return node
+
+
 def to_duckdb(sql):
     """Spark -> DuckDB statements, plus the rewrites sqlglot does not do."""
     s = sql.strip().rstrip(";")
@@ -60,7 +76,8 @@ def to_duckdb(sql):
             out += sqlglot.transpile(f"ALTER TABLE {m.group(1)} ADD COLUMN {col}",
                                      read="spark", write="duckdb")
         return out
-    out = sqlglot.transpile(s, read="spark", write="duckdb")
+    out = [t.transform(_try_to_timestamp).sql(dialect="duckdb")
+           for t in sqlglot.parse(s, read="spark") if t is not None]
     # DuckDB spells the null-safe comparison IS NOT DISTINCT FROM, and its
     # CURRENT_TIMESTAMP carries a time zone, which Python can only fetch with
     # pytz; Spark's has none, so it is cast to a plain timestamp.

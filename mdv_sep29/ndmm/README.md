@@ -21,10 +21,11 @@ same nine criteria as the Optum cohort, in the same order, counted in
   first MDV record is at least 365 days before the index, and the patient is
   seen on the index date. `ENDDATE_CE` is the **last MDV record**.
 - **Death** is an FF1 discharge with a death outcome: in-hospital deaths only,
-  dated to the discharge **as recorded, never moved**. Nobody dies until
+  dated to the discharge **as recorded, never moved**; with two death-coded
+  discharges the earliest is the death. Nobody dies until
   `MDV_COL_FF1_OUTCOME` names the column. A 1L start after a recorded death
-  fails criterion 5, and every act after a death is listed in
-  `NDMM_DEATH_CONFLICTS` (DECISIONS M12).
+  fails criterion 5, and every record after a death - an act, or a second
+  death date - is listed in `NDMM_DEATH_CONFLICTS` (DECISIONS M12).
 - Panobinostat and elotuzumab are barred from setting the index by the
   contract, `NDMM_INDEX_EXCLUDED_ABBRS=PANO|ELOT` (protocol I3; DECISIONS 3,
   M11).
@@ -101,7 +102,7 @@ deviation, as on Optum.
 | `MDV_SCHEMA` | `clnprw_mdv_all_use` | the MDV schema |
 | `CODELIST_DIR` | `/mnt/code/codelist_mdv` | the MDV code lists (`../codelists/README.md`) |
 | `USE_QUARTERLY_TABLES` | `TRUE` | read `t_<name>_<vintage>` |
-| `MDV_VINTAGE` | `2026q2` | the MDV extract; blank derives it from `STUDY_END` |
+| `MDV_VINTAGE` | `2026q2` | the MDV extract, always named; blank takes this default and is never derived from `STUDY_END` |
 | `STUDY_START`, `STUDY_END` | `2018-01-01`, `2026-03-31` | the Optum study's window |
 | `LOT1_FROM` | `2019-01-01` | the eligible 1L period opens |
 | `PRE_LOT1_DAYS` | `365` | lookback and baseline |
@@ -203,7 +204,7 @@ column still means something:
 | `NDMM_FLAGS_ALL`, `NDMM_CLINTRIAL_FLAGS` | per-candidate flags; trial evidence (descriptive) |
 | `NDMM_MM_DX_RULES` | **new**: criterion 1 under each reading (`../MDV_RULES.md`, section 2) |
 | `NDMM_MMA_RECEIPTS` | **new**: every receipt code the drug list resolved to, with its name. Read it before believing a count |
-| `NDMM_MDV_SOURCE_PROFILE` | **new**: MDV's value codes on the records the cohort reads |
+| `NDMM_MDV_SOURCE_PROFILE` | **new**: MDV's value codes on the records the cohort reads, the act care setting among them (a value neither code reads is `unrecognized`, and a finding) |
 | `NDMM_DEATH_CONFLICTS` | **new**: every act after a recorded death (DECISIONS M12) |
 | `NDMM_INDEX_AGENTS`, `NDMM_FU_CE_COUNTS`, `NDMM_PREG_WINDOW_COUNTS`, `NDMM_OTHER_MALIG_GROUPS`, `_GRAIN`, `_CODES`, `NDMM_MM_ADJACENT_GROUPS`, `_CODES`, `NDMM_BELANTAMAB_RECONCILE` | the Optum build's review tables |
 | `NDMM_RUN_METADATA` | adds `MDV_VINTAGE`, `MDV_IP_RULE`, `MDV_REQUIRE_CANCERFLG`, `MDV_SOURCE` |
@@ -218,7 +219,7 @@ shows what a code list actually did, so a decision is made on a number.
 |---|---|---|
 | `NDMM_MM_DX_RULES` | criterion 1 under each MDV reading: the inpatient rule, confirmed only, the cancer flag (`../MDV_RULES.md`, section 2) | M |
 | `NDMM_MDV_SOURCE_PROFILE` | MDV's value codes on the records the cohort reads, so a wrong code is seen before a count is believed | M |
-| `NDMM_INDEX_AGENTS` | every `CL_MED_ABBR` on the code list: `ELIGIBLE` (0 = barred from setting the index) and `N_PATIENTS`, the patients whose index act was that agent. Read it before barring an agent | 3 |
+| `NDMM_INDEX_AGENTS` | every `CL_MED_ABBR` on the code list: `ELIGIBLE` (0 = barred from setting the index, by what the run was told, whether or not its rows resolved to a code), `N_RECEIPT_CODES` (the codes its rows resolved to - coverage, reported apart), and `N_PATIENTS`, the patients whose index act was that agent. Read it before barring an agent | 3 |
 | `NDMM_FU_CE_COUNTS` | criterion 5 at 0, 30, 60 and 90 days and at three calendar months (`add_months`): `N_PASSING_CRITERION_5`, and `N_COHORT`, the whole cohort at that window. `IS_THIS_RUN` marks the applied row; carries `RUN_ID` | 1, 7 |
 | `NDMM_PREG_WINDOW_COUNTS` | criterion 8 over the study period (applied) and over the patient's own baseline plus follow-up: `N_WITH_PREG_CLAIM`, `N_EXCL_INCREMENTAL` and `N_COHORT` | 9 |
 | `NDMM_OTHER_MALIG_GROUPS` | every pairing group the other-cancer list resolves to (ICD-10 category, or `MET`), with its code and label counts. A group holding one code can only confirm itself | 4 |
@@ -227,7 +228,7 @@ shows what a code list actually did, so a decision is made on a number.
 | `NDMM_MM_ADJACENT_GROUPS` | every label containing `PLASMACYTOMA`, `PLASMA CELL`, `GAMMOPATHY` or `MYELOMA`, and every overridden label, with `OVERRIDDEN` and its code count. A plasma-cell label still excluding is named in the log | 4 |
 | `NDMM_MM_ADJACENT_CODES` | every code kept as the index disease rather than another cancer, with the label that kept it | 4 |
 | `NDMM_BELANTAMAB_RECONCILE` | every belantamab act of a cohort member up to that patient's `ENDDATE_CE`, the last MDV record, with `DAYS_FROM_INDEX`. All are on or after the index, so `lot`'s `no_belantamab` removes every patient listed | 2 |
-| `NDMM_DEATH_CONFLICTS` | every patient with an MDV act after their recorded death: `DEATH_DT` as recorded, `FIRST_ACT_AFTER_DEATH`, `LAST_ACT_AFTER_DEATH`, `N_ACTS_AFTER_DEATH`, `N_MM_TX_AFTER_DEATH`, and `DEATH_BEFORE_INDEX` (1 = the 1L start fell after the death, so the patient fails criterion 5). Any row also puts `death_conflicts` on the run's `FINDINGS` | M12 |
+| `NDMM_DEATH_CONFLICTS` | every patient with an MDV record after their recorded death - an act, or a second death-coded discharge: `DEATH_DT` (the earliest death, as recorded), `N_DEATH_DATES`, `LAST_DEATH_DT`, `FIRST_ACT_AFTER_DEATH`, `LAST_ACT_AFTER_DEATH`, `N_ACTS_AFTER_DEATH`, `N_MM_TX_AFTER_DEATH`, and `DEATH_BEFORE_INDEX` (1 = the 1L start fell after the death, so the patient fails criterion 5). Any row also puts `death_conflicts` on the run's `FINDINGS` | M12 |
 
 `NDMM_PREG_WINDOW_COUNTS` is checked as it is written: both rows must
 partition the same population, the narrower window can only leave a larger

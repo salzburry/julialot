@@ -194,21 +194,6 @@ lot_out <- function(tbl) {
   full_name(cfg$work_schema, paste0(prefix, tbl))
 }
 
-get_quarter_suffix <- function(end_date) {
-  v  <- trimws(as.character(end_date))
-  # The window was normalized to YYYY-MM-DD before it got here
-  # (pin_study_window / load_inputs), so anything else is a real fault.
-  dt <- tryCatch(suppressWarnings(as.Date(v)), error = function(e) NA)
-  yr <- if (!is.na(dt)) as.integer(format(dt, "%Y")) else NA_integer_
-  if (is.na(dt) || is.na(yr) || yr < 1900) {
-    stop("get_quarter_suffix: cannot parse STUDY_END=\"", end_date,
-         "\". Use YYYY-MM-DD.")
-  }
-  qtr <- ceiling(as.integer(format(dt, "%m")) / 3)
-  sprintf("%dq%d", yr, qtr)
-}
-
-
 # Whether this error means "the table is not there" rather than "it could not
 # be read".
 #

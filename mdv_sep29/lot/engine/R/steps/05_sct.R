@@ -33,7 +33,7 @@ phase_sct_extract <- function(con, ctx) {
     CREATE OR REPLACE TEMPORARY VIEW sct_codelist AS
     SELECT DISTINCT CL_CODE_TYPE,
       CASE WHEN CL_CODE_TYPE = 'NAME_ENG' THEN lower(trim(CL_CODE_RAW))
-           ELSE upper(regexp_replace(trim(CL_CODE_RAW), '[^A-Za-z0-9]', '')) END AS CL_CODE,
+           ELSE {mdv_code_sql('CL_CODE_RAW')} END AS CL_CODE,
       SCT_TYPE
     FROM (
       SELECT
@@ -58,7 +58,7 @@ phase_sct_extract <- function(con, ctx) {
       WHERE CL_CODE IS NOT NULL AND trim(CL_CODE) <> ''
         -- Normalized, not raw - see mma_codelist. A punctuation-only code
         -- would otherwise match every act with a missing code.
-        AND regexp_replace(CL_CODE, '[^A-Za-z0-9]', '') <> ''
+        AND {mdv_code_sql('CL_CODE')} IS NOT NULL
         AND SCT_TYPE IS NOT NULL AND trim(SCT_TYPE) <> ''
     ) t
   "), qc = "SELECT SCT_TYPE, CL_CODE_TYPE, count(*) AS n_codes FROM sct_codelist GROUP BY SCT_TYPE, CL_CODE_TYPE ORDER BY SCT_TYPE, CL_CODE_TYPE")

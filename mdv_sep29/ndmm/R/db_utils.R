@@ -192,43 +192,6 @@ wrk <- function(tbl) {
   full_name(cfg$work_schema, paste0(prefix, tbl))
 }
 
-get_quarter_suffix <- function(end_date) {
-  v  <- trimws(as.character(end_date))
-  # ISO first. tryCatch because as.Date errors, rather than returning NA, on a
-  # string matching none of its standard formats - which would skip the
-  # recovery below.
-  dt <- tryCatch(suppressWarnings(as.Date(v)), error = function(e) NA)
-  yr <- if (!is.na(dt)) as.integer(format(dt, "%Y")) else NA_integer_
-  # as.Date("30-06-2025") does not return NA - it yields year 0030.
-  # Treat an implausible year as a parse failure and retry the common
-  # non-ISO (Excel) layouts so a reformatted STUDY_END still works.
-  if (is.na(dt) || is.na(yr) || yr < 1900) {
-    cand <- Filter(Negate(is.na), lapply(
-      c("%d-%m-%Y", "%d/%m/%Y", "%m/%d/%Y", "%Y/%m/%d", "%m-%d-%Y"),
-      function(fmt) {
-        d2 <- tryCatch(as.Date(v, format = fmt), error = function(e) NA)
-        if (!is.na(d2) && as.integer(format(d2, "%Y")) >= 1900) d2 else NA
-      }))
-    # 03/04/2025 is 3 April day-first and 4 March month-first, and nothing in
-    # the string says which was meant. Taking the first format that parses
-    # picks one silently, and the two fall in different quarters - a different
-    # set of MDV tables for the whole study. Refuse instead.
-    if (length(unique(vapply(cand, format, character(1)))) > 1L)
-      stop("get_quarter_suffix: STUDY_END=\"", end_date, "\" is ambiguous - it ",
-           "reads as ", paste(unique(vapply(cand, format, character(1))),
-                              collapse = " or "),
-           ". Write it as YYYY-MM-DD.", call. = FALSE)
-    if (length(cand)) dt <- cand[[1]]
-    yr <- if (!is.na(dt)) as.integer(format(dt, "%Y")) else NA_integer_
-  }
-  if (is.na(dt) || is.na(yr) || yr < 1900) {
-    stop("get_quarter_suffix: cannot parse STUDY_END=\"", end_date,
-         "\". Use YYYY-MM-DD - Excel may have reformatted it in config.csv.")
-  }
-  qtr <- ceiling(as.integer(format(dt, "%m")) / 3)
-  sprintf("%dq%d", yr, qtr)
-}
-
 with_retry <- function(fn, max_retries = ndmm_config()$max_retries,
                        base_sleep = ndmm_config()$base_sleep) {
   # Errors worth no retry. Both the Spark class name and the ODBC wording

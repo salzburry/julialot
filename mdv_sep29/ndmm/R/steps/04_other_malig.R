@@ -20,18 +20,20 @@ build_ndmm_other_malig_codes <- function(con) {
       SELECT DISTINCT
              upper(tumor_group) AS tumor_group,
              upper(trim(code_type)) AS code_type,
-             upper(regexp_replace(trim(code), '[^A-Za-z0-9]', '')) AS code,
+             {mdv_code_sql('code')} AS code,
              -- The ICD-10 code the row stands for: its own column, or the
              -- code itself on an ICD10 row. check_code_types() refused a
-             -- DISEASECODE row without one.
-             upper(regexp_replace(trim(coalesce(icd10,
-                     CASE WHEN upper(trim(code_type)) = 'ICD10' THEN code END)),
-                   '[^A-Za-z0-9]', '')) AS icd10
+             -- DISEASECODE row without one. Normalised before the fallback, so
+             -- a blank icd10 is NULL - and NULL cannot meet the MM list's own
+             -- blank below and pass a breast cancer off as myeloma.
+             coalesce({mdv_code_sql('icd10')},
+                      CASE WHEN upper(trim(code_type)) = 'ICD10'
+                           THEN {mdv_code_sql('code')} END) AS icd10
       FROM {src}
-      WHERE code IS NOT NULL AND tumor_group IS NOT NULL
-        -- And non-blank once normalised: '---' would otherwise match every
-        -- diagnosis record with a missing code. See 03_prior_therapy.R.
-        AND regexp_replace(trim(code), '[^A-Za-z0-9]', '') <> ''
+      WHERE tumor_group IS NOT NULL
+        -- Non-blank once normalised: '---' would otherwise match every
+        -- diagnosis record with a missing code.
+        AND {mdv_code_sql('code')} IS NOT NULL
     ),
     -- The criterion is another cancer, meaning other than the index MM, and
     -- anything on the diagnosis code list is the index disease by definition.

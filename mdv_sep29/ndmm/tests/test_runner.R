@@ -920,7 +920,7 @@ ok(grepl("mm.code = om.code", oc0, fixed = TRUE) && grepl("mm.icd10 = om.icd10",
 # query with the exclusion still wrong.
 ok(grepl("IN ({ovr_in}) OR h.code IS NOT NULL", oc0, fixed = TRUE),
    "the flag is set by the join as well as by the label list")
-ok(grepl("AND regexp_replace(trim(code), '[^A-Za-z0-9]', '') <> ''", oc0, fixed = TRUE),
+ok(grepl("AND {mdv_code_sql('code')} IS NOT NULL", oc0, fixed = TRUE),
    "and a code that is blank once normalised is still dropped before any of it")
 
 cat("\n-- a run choice is a choice, not a redefinition of the cohort --\n")
@@ -2331,5 +2331,39 @@ local({
   unlink(cfg_dir, recursive = TRUE)
 })
 
+
+
+cat("\n-- a blank MDV_VINTAGE is the default, through the real loader --\n")
+# The vintage is always named: never derived from STUDY_END. A config.csv with
+# a blank MDV_VINTAGE and a STUDY_END in another quarter takes the default,
+# whether the variable is unset or set empty.
+local({
+  vars <- c("MDV_VINTAGE", "STUDY_END")
+  saved <- Sys.getenv(vars, unset = NA)
+  on.exit(for (v in vars) if (is.na(saved[[v]])) Sys.unsetenv(v)
+                          else do.call(Sys.setenv, setNames(list(saved[[v]]), v)))
+  d <- file.path(tempdir(), "vintage_cfg_ndmm"); dir.create(d, showWarnings = FALSE)
+  writeLines(c("name,value,description", "MDV_VINTAGE,,blank",
+               "STUDY_END,2025-09-30,another quarter"), file.path(d, "config.csv"))
+  vint <- function() {
+    suppressMessages(load_pipeline_inputs(d, "config.csv"))
+    e <- new.env(parent = globalenv())
+    sys.source(file.path(ROOT, "R", "config.R"), envir = e)
+    e$cfg_defaults$mdv_vintage
+  }
+  Sys.unsetenv(vars)
+  v1 <- vint()
+  Sys.unsetenv("STUDY_END"); Sys.setenv(MDV_VINTAGE = "")
+  v2 <- vint()
+  ok(identical(v1, "2026q2") && identical(v2, "2026q2"),
+     paste0("unset (", v1, ") or set empty (", v2, "), never STUDY_END's 2025q3"))
+  e <- new.env(parent = globalenv())
+  sys.source(file.path(ROOT, "R", "mdv_source.R"), envir = e)
+  ok(grepl("never derived from STUDY_END",
+           tryCatch({ e$mdv_vintage(list(mdv_vintage = "")); "" }, error = conditionMessage),
+           fixed = TRUE),
+     "and a blank reaching mdv_vintage() is refused, not replaced")
+  unlink(d, recursive = TRUE)
+})
 
 report()

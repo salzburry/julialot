@@ -110,12 +110,16 @@ death before the MM diagnosis to the diagnosis, and a death before the 1L
 index to the index (section 8), because its dates were constructed from a
 month. MDV's is an exact discharge date, and moving it published a date no
 record carries - a patient recorded dead on 12 June and treated on 15 June
-entered the cohort dead on 15 June. So the date is never moved. An act after a
-recorded death is a contradiction in the data, and nothing here can say which
-side is wrong:
+entered the cohort dead on 15 June. So the date is never moved. With more
+than one death-coded discharge the earliest is the death: a patient dies once,
+and a later death-coded discharge is itself a record after the death. Taking
+the latest let a second discharge on 20 June hide the act on the 15th. A
+record after a recorded death is a contradiction in the data, and nothing here
+can say which side is wrong:
 
-- every such patient is listed in `NDMM_DEATH_CONFLICTS`, and the run's
-  `FINDINGS` carries `death_conflicts`;
+- every such patient is listed in `NDMM_DEATH_CONFLICTS`, with every death
+  date (`N_DEATH_DATES`, `LAST_DEATH_DT`), and the run's `FINDINGS` carries
+  `death_conflicts`;
 - a 1L start after the death fails criterion 5 (`DEATH_BEFORE_INDEX = 1`): the
   patient cannot be followed from an index the data says they did not reach;
 - a death after the 1L start keeps the patient, and a LOT run stops observing

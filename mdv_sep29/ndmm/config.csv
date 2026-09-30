@@ -3,7 +3,7 @@ DATABRICKS_DSN,RWDE,ODBC DSN
 DATABRICKS_CATALOG,hive_metastore,Catalog for all reads and writes
 MDV_SCHEMA,clnprw_mdv_all_use,MDV schema (the one the OC business rules read)
 USE_QUARTERLY_TABLES,TRUE,Read each MDV table as t_<name>_<vintage>
-MDV_VINTAGE,2026q2,The MDV extract's quarterly suffix; blank derives it from STUDY_END
+MDV_VINTAGE,2026q2,The MDV extract's quarterly suffix; always named - a blank takes this default and is never derived from STUDY_END
 STUDY_START,2018-01-01,"Study period start. Part of CONTRACT, so changing it needs NDMM_CONTRACT_OVERRIDE=TRUE"
 STUDY_END,2026-03-31,Study period end. The same window as the Optum cohort; the MDV extract (2026q2) reaches past it
 LOT1_FROM,2019-01-01,"1L eligible-treatment period opens here. Part of CONTRACT, so changing it needs NDMM_CONTRACT_OVERRIDE=TRUE"

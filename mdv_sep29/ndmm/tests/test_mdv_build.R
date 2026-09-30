@@ -41,6 +41,15 @@ local({
   a <- utils::read.csv(f, stringsAsFactors = FALSE, colClasses = "character")
   utils::write.csv(a[, names(a) != "nyugaikbn"], f, row.names = FALSE, na = "")
 })
+# A third, 2026q4, whose act table carries the column with a value that is
+# neither care-setting code: the mapping, not the column, is what fails.
+write_mdv_fixture(work, vintage = "2026q4")
+local({
+  f <- file.path(work, "clnprw_mdv_all_use.t_actdata_2026q4.csv")
+  a <- utils::read.csv(f, stringsAsFactors = FALSE, colClasses = "character")
+  a$nyugaikbn <- "9"
+  utils::write.csv(a, f, row.names = FALSE, na = "")
+})
 Sys.setenv(CODELIST_DIR = fx$codelists, PROJECT_WORK_SCHEMA = "wk",
            OUTPUT_DIR = work, PIPELINE_LOG_FILE = file.path(work, "run.log"),
            DOMINO_RUN_ID = "mdvtest1",
@@ -135,6 +144,10 @@ if (!inherits(res, "error")) {
   ok("P23" %in% coh$PATID,
      "P23's baseline dexamethasone is not prior MM therapy, so she stays")
   ok(!any(rc$med_abbr == "POM"), "a pattern matching no drug in the master resolves to nothing")
+  ok(!any(is.na(rc$RECEIPTCODE) | !nzchar(trimws(rc$RECEIPTCODE))),
+     "no resolved receipt code is blank - the master's '--' and '-' are not codes")
+  ok(identical(sort(as.character(rc$RECEIPTCODE[rc$med_abbr == "MELP"])), "620000007"),
+     "so '%melphalan%' finds the melphalan code alone, not the '--' row named like it")
   ag <- q(paste("SELECT MED_ABBR, ELIGIBLE, N_PATIENTS FROM", W("NDMM_INDEX_AGENTS")))
   ok(identical(ag$ELIGIBLE[ag$MED_ABBR == "BELA"], 0L), "belantamab may not set the index")
   ok(identical(ag$ELIGIBLE[ag$MED_ABBR == "PANO"], 0L) &&
@@ -144,12 +157,15 @@ if (!inherits(res, "error")) {
 
   cat("\n-- a death is kept as recorded; acts after it are listed --\n")
   dc <- q(paste("SELECT PATID, cast(DEATH_DT as string) AS DEATH_DT,",
+                "cast(LAST_DEATH_DT as string) AS LAST_DEATH_DT, N_DEATH_DATES,",
                 "DEATH_BEFORE_INDEX, N_MM_TX_AFTER_DEATH FROM", W("NDMM_DEATH_CONFLICTS")))
   ok(identical(dc$PATID, "P25") && identical(dc$DEATH_DT, "2020-06-12"),
      "P25's act after her 2020-06-12 death is the one conflict, with the date as recorded")
   ok(identical(dc$DEATH_BEFORE_INDEX, 1L) && identical(dc$N_MM_TX_AFTER_DEATH, 1L),
      "her 1L start falls after the death, and it is MM therapy")
   ok(!"P25" %in% coh$PATID, "so she fails criterion 5 rather than having her death moved")
+  ok(identical(dc$N_DEATH_DATES, 2L) && identical(dc$LAST_DEATH_DT, "2020-06-20"),
+     "her second death-coded discharge, 2020-06-20, is listed too, and does not replace the first")
   ok(isTRUE(ag$N_PATIENTS[ag$MED_ABBR == "CARF"] >= 1L), "carfilzomib set P18's index")
 
   cat("\n-- belantamab after the index goes to lot --\n")
@@ -240,6 +256,60 @@ if (!inherits(res7, "error")) {
      "and records the column as NONE")
 }
 Sys.unsetenv(c("MDV_VINTAGE", "MDV_COL_ACT_NYUGAIKBN"))
+
+cat("\n-- code-list rows whose mappings are blank or find nothing --\n")
+# A copy of the fixture's lists with three edge cases: an ICD10 row on mm_dx.csv
+# whose icd10 is spaces (it must fall back to its own code, C90.01, and stay
+# strict); the breast cancer row as an ICD10 row with the same blank icd10 (two
+# blanks must not meet and make breast cancer myeloma); and panobinostat named
+# by a pattern that finds no drug (still barred from the index).
+cl9 <- file.path(work, "codelists_edges")
+dir.create(cl9, showWarnings = FALSE)
+for (f in list.files(fx$codelists, full.names = TRUE)) file.copy(f, cl9, overwrite = TRUE)
+local({
+  rd <- function(f) utils::read.csv(file.path(cl9, f), colClasses = "character", na.strings = "")
+  wr <- function(x, f) utils::write.csv(x, file.path(cl9, f), row.names = FALSE, na = "")
+  mm <- rd("mm_dx.csv"); mm$icd10[mm$code == "C90.01"] <- "  "; wr(mm, "mm_dx.csv")
+  om <- rd("other_malig.csv")
+  om[om$code == "9100001", c("code_type", "code", "icd10")] <- list("ICD10", "C50.9", "  ")
+  wr(om, "other_malig.csv")
+  cl <- rd("cl_mma_codelist.csv")
+  cl[cl$CL_MED_ABBR == "PANO", c("CL_CODE_TYPE", "CL_CODE")] <- list("NAME_ENG", "%no such panobinostat%")
+  wr(cl, "cl_mma_codelist.csv")
+})
+Sys.setenv(CODELIST_DIR = cl9, DOMINO_RUN_ID = "mdvtest8")
+load_ndmm_modules(ROOT); use_duck()
+res8 <- tryCatch(suppressMessages(capture.output(build_ndmm(ROOT, "ndmedge_", con = "duck"))),
+                 error = function(e) e)
+if (inherits(res8, "error")) cat("  stopped: ", conditionMessage(res8), "\n")
+ok(!inherits(res8, "error"), "build_ndmm() completes on the edge-case lists")
+if (!inherits(res8, "error")) {
+  coh8 <- q("SELECT PATID FROM wk.ndmedge_NDMM_COHORT ORDER BY PATID")$PATID
+  ok("P22" %in% coh8, "P22 still qualifies inpatient: the blank icd10 falls back to C90.01")
+  ok(!"P11" %in% coh8, "P11's breast cancer still excludes her: two blank mappings do not meet")
+  ag8 <- q("SELECT MED_ABBR, ELIGIBLE, N_RECEIPT_CODES FROM wk.ndmedge_NDMM_INDEX_AGENTS")
+  ok(identical(ag8$ELIGIBLE[ag8$MED_ABBR == "PANO"], 0L) &&
+       identical(ag8$N_RECEIPT_CODES[ag8$MED_ABBR == "PANO"], 0L),
+     "PANO, barred but resolving to no code, reports ELIGIBLE 0 with 0 receipt codes")
+}
+Sys.setenv(CODELIST_DIR = fx$codelists)
+
+cat("\n-- act care-setting values that neither code reads --\n")
+Sys.setenv(MDV_VINTAGE = "2026q4", DOMINO_RUN_ID = "mdvtest9")
+load_ndmm_modules(ROOT); use_duck()
+res9 <- tryCatch(suppressMessages(capture.output(build_ndmm(ROOT, "ndmq4_", con = "duck"))),
+                 error = function(e) e)
+if (inherits(res9, "error")) cat("  stopped: ", conditionMessage(res9), "\n")
+ok(!inherits(res9, "error"), "the cohort, which reads no act setting, still builds")
+if (!inherits(res9, "error")) {
+  pf9 <- q("SELECT VALUE, READ_AS FROM wk.ndmq4_NDMM_MDV_SOURCE_PROFILE WHERE FIELD = 'setting'")
+  ok(identical(as.character(pf9$VALUE), "9") && identical(pf9$READ_AS, "unrecognized"),
+     "the profile shows the value, 9, as unrecognized - not as a column not carried")
+  md9 <- q("SELECT FINDINGS FROM wk.ndmq4_NDMM_RUN_METADATA WHERE RUN_ID = 'mdvtest9'")
+  ok(grepl("act_setting_unrecognized", md9$FINDINGS, fixed = TRUE),
+     "and the run records it as a finding for the LOT run that will refuse it")
+}
+Sys.unsetenv("MDV_VINTAGE")
 
 cat("\n-- a value code that is not this delivery's stops the run --\n")
 Sys.setenv(MDV_INPATIENT = "9", DOMINO_RUN_ID = "mdvtest3")

@@ -50,5 +50,3 @@ NDMM_LOT1_FROM <- Sys.getenv("LOT1_FROM", unset = "2019-01-01")
 # Steroids dropped from the prior-therapy check. They are supportive care, so
 # a steroid claim alone does not make someone previously treated.
 NDMM_STEROID_ABBRS <- c("DEX","DEXA","DEXAMETHASONE","PRED","PREDNISONE")
-
-NDMM_FINAL_TABLE_NAME <- Sys.getenv("FINAL_TABLE_NAME", unset = "ELIG_COH_FINAL")

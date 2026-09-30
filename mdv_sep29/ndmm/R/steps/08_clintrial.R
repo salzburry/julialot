@@ -64,9 +64,9 @@ build_ndmm_clintrial_codes <- function(con) {
   db_exec(con, glue("
     CREATE OR REPLACE TEMPORARY VIEW {NDMM_CLINTRIAL_CODES} AS
     SELECT DISTINCT upper(trim(code_type)) AS code_type,
-           upper(regexp_replace(trim(code), '[^A-Za-z0-9]', '')) AS code
+           {mdv_code_sql('code')} AS code
     FROM {src}
-    WHERE code IS NOT NULL AND regexp_replace(code, '[^A-Za-z0-9]', '') <> ''
+    WHERE {mdv_code_sql('code')} IS NOT NULL
       -- A blank type joins nothing: the scan derives its own code_type and the
       -- join below is on equality, so a row typed '' can only meet a claim
       -- whose family came back NULL, and NULL is not ''. Dropped here so it

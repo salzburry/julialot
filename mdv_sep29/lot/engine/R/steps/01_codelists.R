@@ -59,7 +59,7 @@ phase_codelists <- function(con) {
       -- lower-cased master name; a receipt code is normalised like any code.
       CASE WHEN upper(trim(CL_CODE_TYPE)) = 'NAME_ENG'
            THEN lower(trim(CL_CODE))
-           ELSE upper(regexp_replace(trim(CL_CODE), '[^A-Za-z0-9]', '')) END AS CL_CODE,
+           ELSE {mdv_code_sql('CL_CODE')} END AS CL_CODE,
       lower(trim(CL_MEDICATION_FULL)) AS CL_MEDICATION_FULL,
       upper(trim(CL_MED_CLASS))       AS CL_MED_CLASS,
       upper(trim(CL_MED_ABBR))        AS CL_MED_ABBR,
@@ -70,7 +70,7 @@ phase_codelists <- function(con) {
       -- Something to match once punctuation is gone: a receipt code of '--'
       -- normalises to '', and a pattern of '%%' matches every drug in the
       -- master, so either would make every act MM therapy.
-      AND regexp_replace(CL_CODE, '[^A-Za-z0-9]', '') <> ''
+      AND {mdv_code_sql('CL_CODE')} IS NOT NULL
   "), qc = "SELECT count(*) AS n_rows, count(DISTINCT CL_MED_ABBR) AS n_meds, count(DISTINCT CL_CODE_TYPE) AS n_code_types FROM mma_codelist")
 
   # Every extractable code-list row resolved to the receipt codes it stands

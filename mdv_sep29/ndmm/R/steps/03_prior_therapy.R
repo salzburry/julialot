@@ -35,7 +35,7 @@ build_ndmm_mma_codelist <- function() {
            -- every other code here.
            CASE WHEN upper(trim(CL_CODE_TYPE)) = 'NAME_ENG'
                 THEN lower(trim(CL_CODE))
-                ELSE upper(regexp_replace(trim(CL_CODE), '[^A-Za-z0-9]', '')) END AS code,
+                ELSE {mdv_code_sql('CL_CODE')} END AS code,
            upper(trim(CL_MED_ABBR))  AS med_abbr
     FROM {codelist_src}
     WHERE CL_CODE      IS NOT NULL AND trim(CL_CODE)      <> ''
@@ -43,7 +43,7 @@ build_ndmm_mma_codelist <- function() {
       -- Something to match once punctuation is gone. A receipt code of '---'
       -- would otherwise normalise to '', and a pattern of '%%' would match
       -- every drug in the master and make every patient previously treated.
-      AND regexp_replace(trim(CL_CODE), '[^A-Za-z0-9]', '') <> ''
+      AND {mdv_code_sql('CL_CODE')} IS NOT NULL
       -- Compared as it is selected: trimmed and upper-cased. Untrimmed, a
       -- ' DEX ' row missed the list here and became 'DEX' in the select, so a
       -- steroid counted as MM therapy - an index, or a prior-therapy exclusion.

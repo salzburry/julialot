@@ -28,12 +28,32 @@ the first run.**
 
 ## The files
 
+**Which ICD-10.** MDV codes diagnoses with Japan's ICD-10, the WHO
+classification as Japan publishes it: four characters, multiple myeloma is
+[C90.0](https://www.e-stat.go.jp/classifications/terms/40/03/C90.0). The
+Optum lists this port inherits are US **ICD-10-CM**, whose fifth character
+says remission - C90.00 not in remission, C90.01 in remission, C90.02 in
+relapse - and whose other-cancer labels carry the same wording ("NOT HAVING
+ACHIEVED REMISSION"). None of those fifth characters exists in Japan's
+classification, and nor does the CM-only metastatic category C7B. So:
+
+- write `icd10` as Japan's code (`C90.0`), not the CM one. The strict test,
+  `icd10` starting C90.0, accepts both, but a Japanese ICD-10 column will never
+  carry `C90.01`, so an `ICD10` row written in CM codes matches nothing;
+- the remission labels the plasma-cell override names are CM wording; which
+  MDV disease codes they stand for has to come from MDV's own disease master;
+- the MDV disease code to ICD-10 crosswalk is not in this folder and has to
+  be validated against MDV's dictionary before a count is believed.
+
 **`mm_dx.csv`**: the MM diagnosis. `code_type, code, icd10`. Every
 `DISEASECODE` row needs `icd10`, the ICD-10 code it maps to. An inpatient
 diagnosis qualifies only with a strict code (`icd10` starting C90.0), as on
 Optum, and an MDV disease code says nothing about that on its own. Carry the
-MDV disease codes for C90.0x (multiple myeloma, in remission, in relapse),
-plus whatever else the Optum `mm_dx.csv` carries, mapped the same way.
+MDV disease codes that map to C90.0 - multiple myeloma however the disease
+master subdivides it - plus whatever else the Optum `mm_dx.csv` carries,
+mapped the same way. A blank or punctuation-only `icd10` counts as missing:
+refused on a `DISEASECODE` row, and on an `ICD10` row the row's own code
+stands in.
 
 **`other_malig.csv`**: the other-cancer exclusion. `code_type, code, icd10,
 tumor_group`. `icd10` groups the outpatient pairs (the three-character

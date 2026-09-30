@@ -579,7 +579,7 @@ check_mdv_values <- function(con, cfg) {
       FROM {ndmm_dx_join(NDMM_MM_DX_CODES, 'c.code AS matched_code')} m
     ),
     tx AS (
-      SELECT a.PATID, a.ACT_DT, a.INPT, a.ACT_DAYS
+      SELECT a.PATID, a.ACT_DT, a.INPT, a.SETTING_RAW, a.ACT_DAYS
       FROM ({mdv_act_select()}
       ) a
       INNER JOIN (SELECT DISTINCT PATID FROM mmdx) p ON p.PATID = a.PATID
@@ -609,16 +609,19 @@ check_mdv_values <- function(con, cfg) {
       FROM tx GROUP BY CASE WHEN ACT_DT IS NULL THEN 'unreadable' ELSE 'read' END,
                        CASE WHEN ACT_DT IS NULL THEN 'neither' ELSE 'date' END
       UNION ALL
+      -- The value as the delivery has it. A value that is neither code is
+      -- 'unrecognized', not 'not carried': the column is there and the mapping
+      -- cannot read it, which a LOT run refuses (03_mma_map.R).
       SELECT 'mm therapy act', 'setting',
+             coalesce(SETTING_RAW, '<not carried>'),
              CASE WHEN INPT = 1 THEN 'inpatient' WHEN INPT = 0 THEN 'outpatient'
-                  ELSE '<not carried>' END,
-             CASE WHEN INPT = 1 THEN 'inpatient' WHEN INPT = 0 THEN 'outpatient'
-                  ELSE 'neither' END,
+                  WHEN SETTING_RAW IS NULL THEN 'not carried'
+                  ELSE 'unrecognized' END,
              count(*), count(DISTINCT PATID)
-      FROM tx GROUP BY CASE WHEN INPT = 1 THEN 'inpatient' WHEN INPT = 0 THEN 'outpatient'
-                            ELSE '<not carried>' END,
+      FROM tx GROUP BY coalesce(SETTING_RAW, '<not carried>'),
                        CASE WHEN INPT = 1 THEN 'inpatient' WHEN INPT = 0 THEN 'outpatient'
-                            ELSE 'neither' END
+                            WHEN SETTING_RAW IS NULL THEN 'not carried'
+                            ELSE 'unrecognized' END
       UNION ALL
       SELECT 'mm therapy act', 'days supplied',
              CASE WHEN ACT_DAYS IS NULL THEN '<not carried>' WHEN ACT_DAYS < 1 THEN 'under 1'
@@ -680,11 +683,25 @@ check_mdv_values <- function(con, cfg) {
     options(ndmm_waivers_applied = union(getOption("ndmm_waivers_applied",
                                                    character(0)), "mdv_values"))
   }
-  # Two conditions that are findings rather than faults: the delivery does not
-  # record death, or does not say how many days an act supplies. Each changes
-  # what a number means, so it goes on the run's own row.
+  # Findings rather than faults. The cohort reads no act's care setting, so an
+  # unrecognized one changes nothing here - but a LOT run over this cohort
+  # reads it for oral supply and refuses such acts, so it is said now.
+  n_unrec <- n_as("mm therapy act", "setting", "unrecognized")
+  if (n_unrec > 0) {
+    vals <- unique(prof$VALUE[prof$SOURCE == "mm therapy act" & prof$FIELD == "setting" &
+                                prof$READ_AS == "unrecognized"])
+    log_msg("  ", format(n_unrec, big.mark = ","), " MM therapy act(s) carry a ",
+            MDV_COLS$act_nyugaikbn, " value that is neither MDV_INPATIENT ('",
+            v$inpatient, "') nor MDV_OUTPATIENT ('", v$outpatient, "'): ",
+            paste(vals, collapse = ", "), ". A LOT run will refuse them; set the ",
+            "codes, or MDV_COL_ACT_NYUGAIKBN=NONE to take the no-setting fallback.")
+    options(ndmm_findings = union(getOption("ndmm_findings", character(0)),
+                                  "act_setting_unrecognized"))
+  }
+  # And one more: the delivery does not record death. That changes what every
+  # ENDDATE means, so it goes on the run's own row.
   if (!nzchar(MDV_COLS$ff1_outcome)) {
-    log_msg("  Death is not observed: MDV_COL_FF1_OUTCOME is blank, so ENDDATE ",
+    log_msg("  Death is not observed: MDV_COL_FF1_OUTCOME is NONE, so ENDDATE ",
             "is the study end for everyone and no line ends in death.")
     options(ndmm_findings = union(getOption("ndmm_findings", character(0)),
                                   "death_not_observed"))
