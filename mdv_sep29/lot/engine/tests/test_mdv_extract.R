@@ -88,11 +88,11 @@ run_mdv_half <- function(prefix) {
   cohort <- check_cohort_input(con, wrk(cfg$input_cohort_table))
   check_cohort_window(con, wrk(cfg$input_cohort_table), cfg)
   st <- check_cohort_build(con, cfg)
+  check_mdv_source(con, cfg)
   options(lot_waivers_applied = character(0), lot_codelist_md5 = list())
   ctx <- phase_codelists(con)
   phase_patient_input(con)
   materialize_cohort_input(con, cohort)
-  check_mdv_source(con, cfg)
   phase_mma_extract(con, ctx)
   phase_sct_extract(con, ctx)
   invisible(list(cfg = cfg, status = st))
@@ -153,12 +153,12 @@ if (!inherits(r1, "error")) {
 }
 
 cat("\n-- the same extraction when the delivery carries no days supplied --\n")
-Sys.setenv(MDV_COL_ACT_DAYS = "", DOMINO_RUN_ID = "mdvlot2")
+Sys.setenv(MDV_COL_ACT_DAYS = "NONE", DOMINO_RUN_ID = "mdvlot2")
 load_lot_modules(ROOT); use_duck()
 r2 <- tryCatch(suppressMessages(capture.output(run_mdv_half("lotmdv2_"))),
                error = function(e) e)
 if (inherits(r2, "error")) cat("  stopped: ", conditionMessage(r2), "\n")
-ok(!inherits(r2, "error"), "the extraction completes with MDV_COL_ACT_DAYS blank")
+ok(!inherits(r2, "error"), "the extraction completes with MDV_COL_ACT_DAYS=NONE")
 if (!inherits(r2, "error")) {
   mp2 <- duck_query("SELECT PATID, MED_ABBR, cast(DATE_SERVICE as string) AS DT, DAY_SUPPLY
                      FROM mma_med_processed WHERE MED_ABBR = 'LEN' ORDER BY PATID, DT")
@@ -181,6 +181,63 @@ r3 <- tryCatch(suppressMessages(capture.output(run_mdv_half("lotmdv3_"))),
                error = function(e) conditionMessage(e))
 ok(is.character(r3) && length(r3) == 1L && grepl("route", r3, fixed = TRUE),
    "CL_ROUTE=IV is the fatal route check, not a silent medical act")
+
+# A copy of the fixture's code lists with one file changed, for the checks
+# below.
+lists_with <- function(name, file, edit) {
+  d <- file.path(work, paste0("codelists_", name))
+  dir.create(d, showWarnings = FALSE)
+  for (f in list.files(fx$codelists, full.names = TRUE)) file.copy(f, d, overwrite = TRUE)
+  x <- read.csv(file.path(d, file), colClasses = "character")
+  write.csv(edit(x), file.path(d, file), row.names = FALSE, na = "")
+  d
+}
+run_with <- function(dir, waivers, id, prefix) {
+  Sys.setenv(CODELIST_DIR = dir, CODELIST_WAIVERS = waivers, DOMINO_RUN_ID = id)
+  load_lot_modules(ROOT); use_duck()
+  tryCatch({ suppressMessages(capture.output(run_mdv_half(prefix))); "" },
+           error = function(e) conditionMessage(e))
+}
+
+cat("\n-- one waived check does not switch another off --\n")
+# A rollup agent no code-list row names is uncoded_meds; POM's pattern finding
+# nothing is unresolved_names. Waiving the first must leave the second standing.
+dir6 <- lists_with("uncoded", "cl_mma_rollup.csv", function(r) {
+  z <- r[1, ]; z$CL_MED_ABBR <- "ZZZ"; z$CL_MEDICATION_FULL <- "zzz"; rbind(r, z) })
+r6 <- run_with(dir6, "uncoded_meds", "mdvlot6", "lotmdv6_")
+ok(grepl("unresolved_names", r6, fixed = TRUE),
+   "with only uncoded_meds waived, POM's unmatched pattern still stops the build")
+r6b <- run_with(dir6, "uncoded_meds,unresolved_names", "mdvlot6b", "lotmdv6b_")
+ok(identical(r6b, "") &&
+     all(c("uncoded_meds", "unresolved_names") %in% getOption("lot_waivers_applied")),
+   "waived by name, both are recorded as applied")
+
+cat("\n-- an SCT name pattern that finds nothing stops the build --\n")
+dir7 <- lists_with("scttypo", "cl_sct_codelist.csv", function(x) {
+  x$CL_CODE[x$CL_CODE == "%vicleucel%"] <- "%vicleucell%"; x })
+r7 <- run_with(dir7, "unresolved_names", "mdvlot7", "lotmdv7_")
+ok(grepl("sct_unresolved_names", r7, fixed = TRUE) && grepl("%vicleucell%", r7, fixed = TRUE),
+   "'%vicleucell%' is refused by name, rather than losing P16's CAR-T")
+r7b <- run_with(dir7, "unresolved_names,sct_unresolved_names", "mdvlot7b", "lotmdv7b_")
+ok(identical(r7b, "") && "sct_unresolved_names" %in% getOption("lot_waivers_applied"),
+   "waived by name, it runs and records the waiver")
+if (identical(r7b, "")) {
+  sc7 <- duck_query("SELECT PATID, SCT_TYPE FROM sct_claims_raw WHERE PATID = 'P16'")
+  ok(!"CART" %in% sc7$SCT_TYPE, "...and the waiver's cost is visible: P16 has no CAR-T event")
+}
+
+cat("\n-- a sensitivity build under its own prefix names the cohort's --\n")
+# The documented sensitivity command writes under mdvds21_ over a cohort built
+# under another prefix. Without COHORT_PREFIX the lineage check looks for the
+# cohort's status under the new prefix.
+Sys.unsetenv("COHORT_PREFIX")
+r8 <- run_with(fx$codelists, "unresolved_names", "mdvlot8", "lotds21_")
+ok(grepl("No cohort build-status table found", r8, fixed = TRUE) &&
+     grepl("lotds21_", r8, fixed = TRUE),
+   "without COHORT_PREFIX the lineage check looks under the new prefix and stops")
+Sys.setenv(COHORT_PREFIX = "ndmm_")
+r8b <- run_with(fx$codelists, "unresolved_names", "mdvlot8b", "lotds21b_")
+ok(identical(r8b, ""), "with COHORT_PREFIX naming the cohort's prefix it runs")
 
 duck_stop()
 report()

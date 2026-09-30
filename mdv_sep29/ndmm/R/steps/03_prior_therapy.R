@@ -44,7 +44,10 @@ build_ndmm_mma_codelist <- function() {
       -- would otherwise normalise to '', and a pattern of '%%' would match
       -- every drug in the master and make every patient previously treated.
       AND regexp_replace(trim(CL_CODE), '[^A-Za-z0-9]', '') <> ''
-      AND upper(coalesce(CL_MED_ABBR, '')) NOT IN ({ster_in})
+      -- Compared as it is selected: trimmed and upper-cased. Untrimmed, a
+      -- ' DEX ' row missed the list here and became 'DEX' in the select, so a
+      -- steroid counted as MM therapy - an index, or a prior-therapy exclusion.
+      AND upper(trim(coalesce(CL_MED_ABBR, ''))) NOT IN ({ster_in})
   ")
 }
 

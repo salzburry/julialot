@@ -38,7 +38,12 @@ CONTRACT <- list(
   outpatient_window_months  = 3L,
   other_malig_window_months = 1L,
   min_age              = 18L,
-  belantamab_abbr      = "BELA"
+  belantamab_abbr      = "BELA",
+  # Protocol I3: panobinostat and elotuzumab are later-line agents and cannot
+  # set the 1L index. Pinned rather than a run choice: left empty, a patient
+  # started on either enters the cohort as newly treated, and nothing
+  # downstream of this build refuses it (DECISIONS M11).
+  index_excluded_abbrs = "PANO|ELOT"
 )
 
 # Decisions a run may make differently, and what each may be set to.
@@ -55,10 +60,9 @@ CHOICES <- list(
   # NDMM_MM_DX_RULES on every run.
   mdv_ip_rule          = c("none", "ff1", "ff1_chemo"),
   mdv_require_cancerflg = c("TRUE", "FALSE"),
-  # Free text: names and codes, validated against the code list at run time by
+  # Free text: receipt codes, validated against the code list at run time by
   # build_ndmm_index_ineligible_codes(), which stops on one that matches
-  # nothing. Shape only here.
-  index_excluded_abbrs = NULL,
+  # nothing. Shape only here. The abbreviations are in CONTRACT.
   index_excluded_codes = NULL
 )
 
@@ -123,7 +127,7 @@ DELIVERABLES <- c("NDMM_COHORT", "NDMM_ATTRITION", "NDMM_INDEX_AGENTS",
                   "NDMM_OTHER_MALIG_GROUPS", "NDMM_OTHER_MALIG_GRAIN",
                   "NDMM_PREG_WINDOW_COUNTS",
                   "NDMM_OTHER_MALIG_CODES",
-                  "NDMM_BELANTAMAB_RECONCILE",
+                  "NDMM_BELANTAMAB_RECONCILE", "NDMM_DEATH_CONFLICTS",
                   "NDMM_CODELIST_METADATA", "NDMM_RUN_METADATA",
                   "NDMM_BUILD_STATUS")
 OUTPUTS <- c(DELIVERABLES, CHECKPOINTS)
@@ -818,14 +822,11 @@ build_ndmm_cohort_table <- function(con, cfg) {
       SELECT cast(PATID as string) AS PATID, GDR_CD, YRDOB, MM_DX_DT
       FROM {NDMM_BASE_COHORT}
     ),
-    -- The death date was clamped against the MM diagnosis, and the cohort is
-    -- anchored at the 1L start, which is later. A death recorded between the
-    -- two would give an ENDDATE before the index and a negative FU_DAYS.
-    -- Re-clamp at the anchor that is actually used.
+    -- The FF1 death date as recorded. Criterion 5 refuses a patient recorded
+    -- dead before the 1L start, so no row here has a death before its index;
+    -- check_ndmm_cohort() holds the table to that rather than moving a date.
     dth AS (
-      SELECT b.PATID,
-             CASE WHEN b.DEATH_DT IS NOT NULL AND b.DEATH_DT < i.INDEX_DATE
-                  THEN i.INDEX_DATE ELSE b.DEATH_DT END AS DEATH_DT
+      SELECT b.PATID, b.DEATH_DT
       FROM idx i
       INNER JOIN {NDMM_BASE_COHORT} b ON b.PATID = i.PATID
     )
@@ -875,7 +876,8 @@ check_ndmm_cohort <- function(con, cfg, n_expected) {
   q <- db_q(con, glue("SELECT count(*) AS n_rows, count(DISTINCT PATID) AS n_pat, ",
                       "sum(CASE WHEN INDEX_DATE IS NULL THEN 1 ELSE 0 END) AS n_noidx, ",
                       "sum(CASE WHEN ENDDATE < INDEX_DATE THEN 1 ELSE 0 END) AS n_backwards, ",
-                      "sum(CASE WHEN FU_DAYS < {NDMM_FU_CE_DAYS} THEN 1 ELSE 0 END) AS n_nofu ",
+                      "sum(CASE WHEN FU_DAYS_CE < least({NDMM_FU_CE_DAYS}, FU_DAYS) ",
+                      "THEN 1 ELSE 0 END) AS n_nofu ",
                       "FROM {tbl}"))
   if (q$n_rows != q$n_pat)
     stop(tbl, " has ", q$n_rows, " rows for ", q$n_pat, " patients. A cohort ",
@@ -883,24 +885,25 @@ check_ndmm_cohort <- function(con, cfg, n_expected) {
   if (isTRUE(q$n_noidx > 0))
     stop(q$n_noidx, " rows in ", tbl, " have no INDEX_DATE. It is the 1L start, ",
          "and every window a LOT build measures runs from it.", call. = FALSE)
-  # A death recorded between the diagnosis and the 1L start would end
-  # follow-up before it began. build_ndmm_cohort_table() re-clamps it.
+  # A death recorded before the 1L start would end follow-up before it began.
+  # Criterion 5 refuses those patients (06_flags.R); the date is never moved.
   if (isTRUE(q$n_backwards > 0))
     stop(q$n_backwards, " rows in ", tbl, " end before they begin: ENDDATE is ",
-         "earlier than INDEX_DATE. build_ndmm_cohort_table() re-clamps death at ",
-         "the index; if this fires, that clamp is not working.", call. = FALSE)
-  # The floor is NDMM_FU_CE_DAYS, not 1. FU_DAYS counts days after the index,
-  # and criterion 5 requires enrolment through index + NDMM_FU_CE_DAYS, so a
-  # patient who passes it has at least that many. Hard-coding 1 contradicted
-  # the one-day rule: with FU_CE_DAYS = 0 the index date alone is enough
-  # follow-up, but a patient whose ENDDATE lands on the index - death clamped
-  # there, or an index on the study end - has FU_DAYS = 0 and stopped the run
-  # after passing every criterion.
+         "earlier than INDEX_DATE. Criterion 5 refuses a patient recorded dead ",
+         "before the index; if this fires, that predicate is not working. ",
+         "NDMM_DEATH_CONFLICTS lists them.", call. = FALSE)
+  # The same target criterion 5 applies: observed through
+  # least(index + NDMM_FU_CE_DAYS, study end, death), counted in days from the
+  # index. FU_DAYS is the days to least(study end, death), so the target is
+  # least(NDMM_FU_CE_DAYS, FU_DAYS), and FU_DAYS_CE - observation to the last
+  # record, capped the same way - must reach it. Comparing FU_DAYS with the
+  # uncapped NDMM_FU_CE_DAYS stopped the run on a patient who died inside the
+  # window after passing criterion 5 on exactly this cap.
   if (isTRUE(q$n_nofu > 0))
     stop(q$n_nofu, " rows in ", tbl, " have less follow-up than criterion 5 ",
-         "requires (FU_DAYS < ", NDMM_FU_CE_DAYS, "). A LOT run over this ",
-         "cohort would measure lines in a window that does not exist.",
-         call. = FALSE)
+         "requires (FU_DAYS_CE < least(", NDMM_FU_CE_DAYS, ", FU_DAYS)). A LOT ",
+         "run over this cohort would measure lines in a window that does not ",
+         "exist.", call. = FALSE)
   if (!is.na(n_expected) && q$n_pat != n_expected)
     stop(tbl, " holds ", q$n_pat, " patients but the attrition ends at ",
          n_expected, ". The cohort and the funnel that reaches it must agree.",
@@ -1251,6 +1254,8 @@ build_ndmm <- function(here, prefix, con = NULL) {
   # needs every other criterion already decided.
   build_ndmm_fu_ce_counts(con, cfg)
   build_ndmm_preg_window_counts(con, cfg)
+  # After the flags, so DEATH_BEFORE_INDEX reads the 1L starts criterion 5 read.
+  build_ndmm_death_conflicts(con, cfg)
   # After NDMM_MM_TX, which the OC outpatient treatment link reads.
   build_ndmm_mm_dx_rules(con, cfg)
 

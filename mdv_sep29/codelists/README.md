@@ -71,7 +71,10 @@ CL_ROUTE`.
 - A `RECEIPTCODE` is nine digits. Another length stops the LOT build unless
   `receipt_shape` is waived.
 - Leave steroids out, as production does on Optum. The cohort build drops them
-  by abbreviation anyway.
+  by abbreviation anyway, compared trimmed and upper-cased, so `' DEX '` is
+  dropped as `DEX` is.
+- Carry `PANO` and `ELOT`: the cohort's contract bars both from setting the 1L
+  index (protocol I3), and an entry matching no `CL_MED_ABBR` stops the build.
 
 A starting point for `NAME_ENG` rows, to be checked against `m_drug` before
 use. One row per agent the Optum rollup names and Japan markets, e.g.
@@ -92,7 +95,10 @@ SCT_TYPE` (`AUTO`, `ALLO`, `CART`). Autologous and allogeneic stem cell
 transplant as the receipt codes of K922 (bone marrow, peripheral blood stem
 cell, cord blood; autologous and allogeneic are separate codes). CAR-T as the
 product (`NAME_ENG` `%vicleucel%`, `%autoleucel%`, or its receipt code) or as
-the CAR-T administration procedure. Diagnosis codes are accepted, but a
+the CAR-T administration procedure. A `NAME_ENG` pattern here that finds no
+drug stops the LOT build (`sct_unresolved_names`, waivable once read): a
+misspelt CAR-T pattern would otherwise lose every CAR-T event silently.
+Diagnosis codes are accepted, but a
 diagnosis is dated to its claim month, and a transplant-status diagnosis
 recorded monthly would read as a transplant every month. **Confirm that
 `actdata` carries procedures**; the OC rules describe it only as drug

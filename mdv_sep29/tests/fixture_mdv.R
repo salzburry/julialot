@@ -38,6 +38,9 @@ mdv_fixture <- function() {
   APAP <- 610000001; BORT <- 620000001; LEN <- 620000002; DARA <- 620000003
   CARF <- 620000004; BELA <- 620000005; DEX <- 620000006; MELP <- 620000007
   IDECEL <- 620000008; DELIVERY <- 150000001; AUTO <- 150000002; ALLO <- 150000003
+  # Listed on cl_mma_codelist.csv only (.listed_only_codes(), in .LISTED_ONLY
+  # order): panobinostat is the sixth.
+  PANO <- 629000006
 
   # P01 in. Outpatient months 2019-03 and 2019-05 (two apart). Index at the
   # first bortezomib, 2019-04-10. Later: an autologous transplant, and an
@@ -197,12 +200,47 @@ mdv_fixture <- function() {
   DX("P22", 202003, 9999999, inout = 2, from = 20200310, icd = "C90.01")
   A("P22", "2020-03-15", LEN, days = 21)
 
-  # P23 in, with a trial diagnosis the month before the MM diagnosis.
+  # P23 in, with a trial diagnosis the month before the MM diagnosis. And
+  # dexamethasone in the baseline, which the code list spells ' DEX ': a
+  # steroid is not MM therapy, so it neither indexes nor excludes her.
   P("P23", 2, 195023)
   A("P23", "2019-03-01", APAP)
+  A("P23", "2019-10-01", DEX, days = 5)
   DX("P23", 202002, TRIAL)
   DX("P23", 202003, MM); DX("P23", 202004, MM)
   A("P23", "2020-04-10", BORT)
+
+  # P24 out at 3: her only MM therapy is panobinostat, which protocol I3 bars
+  # from setting the 1L index (NDMM_INDEX_EXCLUDED_ABBRS, pinned PANO|ELOT).
+  P("P24", 2, 195024)
+  A("P24", "2019-01-10", APAP)
+  DX("P24", 202002, MM); DX("P24", 202003, MM)
+  A("P24", "2020-03-10", PANO, days = 21)
+
+  # P25 out at 5: recorded dead at an FF1 discharge on 2020-06-12, then an
+  # act on 2020-06-15 that would be her index. The death date is kept as
+  # recorded, and a 1L start after it fails criterion 5 (NDMM_DEATH_CONFLICTS).
+  P("P25", 1, 195025)
+  A("P25", "2019-01-15", APAP)
+  DX("P25", 202004, MM); DX("P25", 202005, MM)
+  F1("P25", "2020-06-01", "2020-06-12", outcome = 6)
+  A("P25", "2020-06-15", BORT)
+
+  # P26 out at 3: his only drug on the MM list is dexamethasone, spelled
+  # ' DEX ' there. A steroid cannot set the index.
+  P("P26", 1, 195026)
+  A("P26", "2019-02-01", APAP)
+  DX("P26", 202005, MM); DX("P26", 202006, MM)
+  A("P26", "2020-06-20", DEX, days = 5)
+
+  # P27 in, and dies five days after the index, at an FF1 discharge. Under a
+  # 90-day follow-up requirement criterion 5 caps the window at the death, and
+  # the final cohort check must apply the same cap.
+  P("P27", 1, 195027)
+  A("P27", "2019-03-01", APAP)
+  DX("P27", 202006, MM); DX("P27", 202007, MM)
+  A("P27", "2020-07-10", BORT)
+  F1("P27", "2020-07-11", "2020-07-15", outcome = 6)
 
   drug <- .rows(
     list(receiptcode = APAP,   receiptname_eng = "Acetaminophen Tablets 200mg"),
@@ -213,7 +251,8 @@ mdv_fixture <- function() {
     list(receiptcode = BELA,   receiptname_eng = "Belantamab Mafodotin for Injection 100mg"),
     list(receiptcode = DEX,    receiptname_eng = "Dexamethasone Tablets 4mg"),
     list(receiptcode = MELP,   receiptname_eng = "Melphalan for Injection 50mg"),
-    list(receiptcode = IDECEL, receiptname_eng = "Idecabtagene Vicleucel Suspension"))
+    list(receiptcode = IDECEL, receiptname_eng = "Idecabtagene Vicleucel Suspension"),
+    list(receiptcode = PANO,   receiptname_eng = "Panobinostat Lactate Capsules 10mg"))
   list(patient = do.call(rbind, lapply(pat, as.data.frame, stringsAsFactors = FALSE)),
        disease = do.call(rbind, lapply(dx,  as.data.frame, stringsAsFactors = FALSE)),
        act     = do.call(rbind, lapply(act, as.data.frame, stringsAsFactors = FALSE)),
@@ -247,7 +286,9 @@ mdv_codelists <- function() {
       list(CL_CODE_TYPE = "RECEIPTCODE", CL_CODE = "620000003", CL_MEDICATION_FULL = "daratumumab",  CL_MED_CLASS = "CD38",    CL_MED_ABBR = "DARA", CL_ROUTE = "INJ"),
       list(CL_CODE_TYPE = "NAME_ENG",    CL_CODE = "%carfilzomib%", CL_MEDICATION_FULL = "carfilzomib", CL_MED_CLASS = "PI",   CL_MED_ABBR = "CARF", CL_ROUTE = "INJ"),
       list(CL_CODE_TYPE = "NAME_ENG",    CL_CODE = "%belantamab%",  CL_MEDICATION_FULL = "belantamab mafodotin", CL_MED_CLASS = "BCMA", CL_MED_ABBR = "BELA", CL_ROUTE = "INJ"),
-      list(CL_CODE_TYPE = "RECEIPTCODE", CL_CODE = "620000006", CL_MEDICATION_FULL = "dexamethasone", CL_MED_CLASS = "STEROID", CL_MED_ABBR = "DEX",  CL_ROUTE = "ORAL"),
+      # Spelled with the spaces a hand-edited list carries: the steroid
+      # drop has to compare it trimmed, the way it is selected.
+      list(CL_CODE_TYPE = "RECEIPTCODE", CL_CODE = "620000006", CL_MEDICATION_FULL = "dexamethasone", CL_MED_CLASS = "STEROID", CL_MED_ABBR = " DEX ", CL_ROUTE = "ORAL"),
       list(CL_CODE_TYPE = "NAME_ENG",    CL_CODE = "%melphalan%",   CL_MEDICATION_FULL = "melphalan",   CL_MED_CLASS = "ALKYLATOR", CL_MED_ABBR = "MELP", CL_ROUTE = "INJ"),
       list(CL_CODE_TYPE = "NAME_ENG",    CL_CODE = "%pomalidomide%", CL_MEDICATION_FULL = "pomalidomide", CL_MED_CLASS = "IMID",   CL_MED_ABBR = "POM",  CL_ROUTE = "ORAL")),
     # The rest of the LOT engine's code lists. Its rollup needs 20 agents and
@@ -316,18 +357,21 @@ write_mdv_fixture <- function(dir, vintage = "2026q2", schema = "clnprw_mdv_all_
 
 # What the cohort build must say about these patients.
 EXPECTED <- list(
-  attrition = c(18, 17, 16, 15, 15, 14, 12, 11, 10),
-  cohort = c("P01", "P02", "P03", "P13", "P16", "P17", "P18", "P20", "P22", "P23"),
+  attrition = c(22, 21, 18, 17, 16, 15, 13, 12, 11),
+  cohort = c("P01", "P02", "P03", "P13", "P16", "P17", "P18", "P20", "P22", "P23",
+             "P27"),
   index  = c(P01 = "2019-04-10", P02 = "2020-06-15", P03 = "2020-01-20",
              P13 = "2020-02-15", P16 = "2020-02-01", P17 = "2020-01-10",
              P18 = "2020-03-05", P20 = "2021-01-12", P22 = "2020-03-15",
-             P23 = "2020-04-10"),
+             P23 = "2020-04-10", P27 = "2020-07-10"),
+  # who dies, on the FF1 discharge date as recorded
+  death  = c(P17 = "2021-03-01", P27 = "2020-07-15"),
   mm_dx  = c(P01 = "2019-03-01", P02 = "2020-06-01", P22 = "2020-03-01"),
   # criterion 1 alone, by reading (NDMM_MM_DX_RULES)
-  dx_rules = c("as configured" = 18,
-               "inpatient: nyugaikbn alone (the Optum rule)" = 18,
-               "inpatient: inside an FF1 episode" = 16,
-               "inpatient: FF1 first cancer with chemotherapy (the OC rule)" = 15,
-               "suspected diagnoses included" = 19,
-               "cancerflg not required" = 19)
+  dx_rules = c("as configured" = 22,
+               "inpatient: nyugaikbn alone (the Optum rule)" = 22,
+               "inpatient: inside an FF1 episode" = 20,
+               "inpatient: FF1 first cancer with chemotherapy (the OC rule)" = 19,
+               "suspected diagnoses included" = 23,
+               "cancerflg not required" = 23)
 )

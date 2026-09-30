@@ -76,6 +76,37 @@ phase_sct_extract <- function(con, ctx) {
     INNER JOIN m ON s.CL_CODE_TYPE = 'NAME_ENG' AND m.NAME_ENG LIKE s.CL_CODE
   "), qc = "SELECT SCT_TYPE, count(DISTINCT RECEIPTCODE) AS n_receiptcodes FROM sct_receipts GROUP BY SCT_TYPE ORDER BY SCT_TYPE")
 
+  # A NAME_ENG pattern the inner join above resolved to nothing. Every
+  # structural check below passes on it, and the product's acts - CAR-T,
+  # mostly - are then never seen, so a line a CAR-T should end or start runs
+  # on. A misspelling ('%vicleucell%') is the likely cause; a product not sold
+  # in Japan the other. Stops unless waived by name, like unresolved_names on
+  # the drug list.
+  sct_unresolved <- db_q(con, "
+    SELECT s.SCT_TYPE, s.CL_CODE
+    FROM sct_codelist s
+    LEFT JOIN (SELECT DISTINCT CODE FROM sct_receipts) r ON r.CODE = s.CL_CODE
+    WHERE s.CL_CODE_TYPE = 'NAME_ENG' AND r.CODE IS NULL
+    ORDER BY s.SCT_TYPE, s.CL_CODE
+  ")
+  if (nrow(sct_unresolved) > 0) {
+    print(sct_unresolved)
+    problem <- data.frame(check = "sct_unresolved_names", detail = paste0(
+      nrow(sct_unresolved), " SCT NAME_ENG pattern(s) matching no drug in ",
+      mdv_tbl("drug"), ": ",
+      paste0(sct_unresolved$SCT_TYPE, " '", sct_unresolved$CL_CODE, "'", collapse = ", ")),
+      stringsAsFactors = FALSE)
+    if (!problem$check %in% codelist_waivers())
+      stop(problem$detail, ". Those acts would never be read as transplants or CAR-T. ",
+           "Fix the pattern, or name sct_unresolved_names in CODELIST_WAIVERS ",
+           "once the study team has read which.", call. = FALSE)
+    log_msg("WAIVED (", problem$check, "): ", problem$detail)
+    options(lot_waivers_applied = union(getOption("lot_waivers_applied", character(0)),
+                                        problem$check))
+  } else {
+    log_msg("  OK: Every SCT NAME_ENG pattern matches a drug in the master.")
+  }
+
   # DISTINCT covers SCT_TYPE, so one code can still name both AUTO and ALLO,
   # and one act would become two transplants. Asked of the rows and of the
   # receipt codes they resolve to, which is what the act join sees.
@@ -223,12 +254,14 @@ phase_sct_cluster <- function(con, ctx) {
   #         its first day). Take the LAST date in each window, not the first.
   #         The first claims are workup; the last is the transplant.
   #
-  # Tandem boundary adjustment. When a 14-day window straddles the 180-day
-  # tandem boundary, measured from the previous finalized TX date, take the date
-  # closest to the boundary instead of the window's last: min |date - boundary|
-  # over the dates in the window. Worked example: TX_AUTO1 = 09MAY2018, the
-  # 180-day mark is 05NOV2018, and the window 06NOV-20NOV picks 07NOV rather
-  # than 20NOV.
+  # Tandem boundary adjustment. When any claim in a 14-day window is within
+  # sct_auto_window_days of the 180-day tandem boundary, measured from the
+  # previous finalized TX date - on either side of it, not only across it - take
+  # the date closest to the boundary instead of the window's last: min |date -
+  # boundary| over the dates in the window. Worked example: TX_AUTO1 =
+  # 09MAY2018, the 180-day mark is 05NOV2018, and the window 06NOV-20NOV, wholly
+  # past the mark, picks 07NOV rather than 20NOV (LOT_RULES.md 6.1; vignettes
+  # auto_seam_straddle, auto_seam_after, auto_seam_far).
   #
   # The boundary is prev + sct_tandem_days, the last day that still counts as a
   # tandem, and it has to be the same day the classification uses: every

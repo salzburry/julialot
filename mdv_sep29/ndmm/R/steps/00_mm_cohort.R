@@ -205,9 +205,11 @@ build_ndmm_demographics <- function(con) {
     )
     SELECT PATID, GDR_CD, YRDOB FROM ranked WHERE rn = 1
   "))
-  # A date before the diagnosis is set to the diagnosis, so DEATH_DT is never
-  # earlier than the date follow-up runs from - the Optum build's clamp, kept
-  # because the diagnosis is dated to the first of its month.
+  # The FF1 discharge date as recorded. The Optum build clamped a death before
+  # the diagnosis to the diagnosis; on MDV the death is an exact discharge
+  # date, so moving it would publish a date no record carries. A death before
+  # the 1L start fails criterion 5 instead (06_flags.R), and every act after a
+  # recorded death is listed in NDMM_DEATH_CONFLICTS (DECISIONS M12).
   db_exec(con, glue("
     CREATE OR REPLACE TEMPORARY VIEW {NDMM_DEATH_DT} AS
     WITH died AS (
@@ -216,9 +218,7 @@ build_ndmm_demographics <- function(con) {
       WHERE DIED = 1 AND FF1_END_DT IS NOT NULL
       GROUP BY PATID
     )
-    SELECT q.PATID, q.MM_DX_DT,
-           CASE WHEN d.death_raw IS NOT NULL AND d.death_raw < q.MM_DX_DT
-                THEN q.MM_DX_DT ELSE d.death_raw END AS DEATH_DT
+    SELECT q.PATID, q.MM_DX_DT, d.death_raw AS DEATH_DT
     FROM {NDMM_MM_QUALIFYING} q
     LEFT JOIN died d ON d.PATID = q.PATID
   "))

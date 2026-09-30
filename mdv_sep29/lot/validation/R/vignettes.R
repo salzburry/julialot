@@ -221,6 +221,63 @@ VIGNETTES <- list(
        why = "The later-line window closes sooner than a reader expects."),
 
   # ---- cases with no boundary, but a rule worth stating -------------------
+  # The tandem seam (LOT_RULES.md 6.1). A grouping window with any claim within
+  # sct_auto_window_days of the tandem mark - the previous transplant plus
+  # sct_tandem_days - is dated at its claim closest to the mark, on either side
+  # of it, instead of at its last claim. The code's own worked example asks for
+  # this on a window wholly past the mark (first AUTO 09MAY2018, mark 05NOV2018,
+  # claims 07NOV-20NOV give 07NOV), so the rule is "near", not "across".
+  list(id = "auto_seam_straddle", title = "AUTO window across the tandem mark",
+       param = NA_character_, confidence = "to_confirm",
+       where = "lot/engine/R/steps/05_sct.R | coalesce(s.cur_boundary_dt, s.cur_max_dt)",
+       events = function(p) rbind(
+         ev(0,  "MED",  "1L regimen starts"),
+         ev(30, "AUTO", "first autologous transplant"),
+         ev(30 + p$sct_tandem_days - 3L, "AUTO", "code three days inside the tandem window"),
+         ev(30 + p$sct_tandem_days + 6L, "AUTO", "code in the same window, six days past it")),
+       expected = function(p) paste0(
+         "One second transplant, dated day ", 30 + p$sct_tandem_days - 3L,
+         " - the claim closest to the tandem mark - not day ",
+         30 + p$sct_tandem_days + 6L, ", the window's last. It is inside ",
+         "sct_tandem_days, so the pair is a tandem and LOT1 does not end. Dated at ",
+         "its last claim it would be excess and end the line."),
+       why = paste0("The seam rule exists for this window: which side of the mark ",
+                    "a billing episode lands on decides tandem or excess.")),
+
+  list(id = "auto_seam_after", title = "AUTO window just past the tandem mark",
+       param = NA_character_, confidence = "to_confirm",
+       where = "lot/engine/R/steps/05_sct.R | coalesce(s.cur_boundary_dt, s.cur_max_dt)",
+       events = function(p) rbind(
+         ev(0,  "MED",  "1L regimen starts"),
+         ev(30, "AUTO", "first autologous transplant"),
+         ev(30 + p$sct_tandem_days + 2L, "AUTO", "code two days past the tandem window"),
+         ev(30 + p$sct_tandem_days + 11L, "AUTO", "code in the same window, eleven days past it")),
+       expected = function(p) paste0(
+         "One second transplant, dated day ", 30 + p$sct_tandem_days + 2L,
+         " - the claim closest to the mark, though the whole window is past it - ",
+         "not day ", 30 + p$sct_tandem_days + 11L, ". Past sct_tandem_days either ",
+         "way, so it is excess and ends LOT1; the seam rule moves the date the ",
+         "line ends, not whether it does."),
+       why = paste0("The reading the code's worked example pins, and the one a ",
+                    "straddle-only reading of the rule would date differently.")),
+
+  list(id = "auto_seam_far", title = "AUTO window clear of the tandem mark",
+       param = NA_character_, confidence = "derived",
+       where = "lot/engine/R/steps/05_sct.R | coalesce(s.cur_boundary_dt, s.cur_max_dt)",
+       events = function(p) rbind(
+         ev(0,  "MED",  "1L regimen starts"),
+         ev(30, "AUTO", "first autologous transplant"),
+         ev(30 + p$sct_tandem_days + p$sct_auto_window_days + 1L, "AUTO",
+            "code one day beyond a grouping window from the mark"),
+         ev(30 + p$sct_tandem_days + p$sct_auto_window_days + 8L, "AUTO",
+            "code in the same window")),
+       expected = function(p) paste0(
+         "One second transplant, dated day ",
+         30 + p$sct_tandem_days + p$sct_auto_window_days + 8L,
+         " - the window's last claim, the infusion (6.1). No claim is within ",
+         "sct_auto_window_days of the mark, so the seam rule does not apply."),
+       why = "Where the seam rule stops: every window further out is dated at its last claim."),
+
   list(id = "allo_single_day", title = "Allogeneic transplant line spans one day",
        param = NA_character_, confidence = "derived",
        where = "lot/engine/R/steps/10_lot2_5_base.R | A single_day ALLO LOT ends on the ALLO date itself",

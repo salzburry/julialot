@@ -16,28 +16,13 @@ report <- function() {
   if (fail > 0L) quit(status = 1L)
 }
 
-# glue is not installed everywhere; the templates only use {expr}, so a small
-# stand-in keeps the tests runnable offline. Where the real package is present
-# it has to be attached rather than merely loadable: the suites sys.source()
-# each file into environments parented on globalenv, so glue() is found on the
-# search path or not at all, and requireNamespace() alone does not put it
-# there. Loadable-but-not-attached is why these ran only where glue was absent.
-if (requireNamespace("glue", quietly = TRUE)) {
-  library(glue)
-} else {
-  glue <- function(..., .envir = parent.frame()) {
-    t <- paste0(..., collapse = "")
-    m <- gregexpr("\\{[^{}]+\\}", t)[[1]]
-    if (m[1] == -1L) return(t)
-    len <- attr(m, "match.length"); out <- character(0); pos <- 1L
-    for (i in seq_along(m)) {
-      out <- c(out, substr(t, pos, m[i] - 1L),
-               paste(as.character(eval(parse(
-                 text = substr(t, m[i] + 1L, m[i] + len[i] - 2L)), .envir)),
-                 collapse = ""))
-      pos <- m[i] + len[i]
-    }
-    paste0(c(out, substr(t, pos, nchar(t))), collapse = "")
-  }
-  assign("glue", glue, envir = globalenv())
-}
+# glue, as the builds use it. A hand-written stand-in used to take over where
+# the package was missing, which tested a second interpolator rather than the
+# one production runs; the suites now require the real one. It has to be
+# attached rather than merely loadable: the suites sys.source() each file into
+# environments parented on globalenv, so glue() is found on the search path or
+# not at all.
+if (!requireNamespace("glue", quietly = TRUE))
+  stop("These suites need the glue package, as the builds do: ",
+       "install.packages(\"glue\")", call. = FALSE)
+library(glue)

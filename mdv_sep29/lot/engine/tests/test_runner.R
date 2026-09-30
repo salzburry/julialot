@@ -130,6 +130,39 @@ ok(all(c("STUDY_START", "STUDY_END") %in% names(FINAL_METADATA_COLS)),
    paste0("and the window is among them - it is not in CONTRACT, so ",
           "CONTRACT_SETTINGS does not carry it"))
 
+# The MDV mappings are not in CONTRACT either, so two extractions differing
+# only in a column name would record identical settings. Run the writer
+# against a stub warehouse, change the days-supplied column, and read what it
+# records.
+local({
+  e <- new.env(parent = globalenv())
+  for (f in c("db_utils_lot.R", "build_lot.R", "mdv_source.R"))
+    sys.source(file.path(ROOT, "R", f), envir = e)
+  sent <- character(0)
+  assign("lot_out", function(x) paste0("wk.t_", x), envir = e)
+  assign("log_msg", function(...) invisible(NULL), envir = e)
+  assign("run_id", "r1", envir = e)
+  assign("db_exec", function(con, sql) { sent <<- c(sent, sql); invisible(0L) }, envir = e)
+  assign("db_q", function(con, sql) {
+    if (grepl("DESCRIBE", sql, fixed = TRUE))
+      data.frame(col_name = names(e$FINAL_METADATA_COLS))
+    else data.frame(LOT_NUM = 1L, n = 3L)
+  }, envir = e)
+  cfg <- list(code_md5 = "x", study_start = "2018-01-01", study_end = "2026-03-31")
+  cnt <- list(n_rows = 3L, n_patients = 3L)
+  record <- function(days) {
+    e$MDV_COLS$act_days <- days
+    sent <<- character(0)
+    e$record_final_counts(NULL, cfg, cnt, cnt)
+    grep("^\\s*UPDATE", sent, value = TRUE)[1]
+  }
+  u1 <- record("kaisu"); u2 <- record("")
+  ok(grepl("MDV_SOURCE = '", u1, fixed = TRUE) && grepl("col.act_days=kaisu", u1, fixed = TRUE),
+     "the run's metadata records the MDV mappings the extraction read")
+  ok(grepl("col.act_days=NONE", u2, fixed = TRUE) && !identical(u1, u2),
+     "...so a different days-supplied column is a different record")
+})
+
 cat("\n-- two cohorts cannot collide --\n")
 # The point of the module: same rules, different output names. pin_cohort()
 # owns the refusal and runs before anything else reads either field.
@@ -389,10 +422,10 @@ body <- sub(".*build_lot <- function\\([^)]*\\) \\{", "", bl)
 ORDER <- c("check_settings", "pin_output_schema", "pin_cohort",
            "pin_study_window", "check_lot_contract", "set_lot_config",
            "check_cohort_input", "check_cohort_window",
+           "check_mdv_source",
            "check_no_active_run", "clear_run_rows",
            "phase_codelists", "record_codelist_hashes",
            "phase_patient_input", "materialize_cohort_input",
-           "check_mdv_source",
            "phase_mma_map",
            # phase_sct ahead of phase_lot1_base, so a line's regimen can be
            # bounded by the transplant that ended the line. Not cosmetic: the
@@ -1200,9 +1233,11 @@ ok(!is.null(msg) && grepl("changed size", msg, fixed = TRUE) &&
 # nothing between that and the copy may consume it.
 pos <- function(f) regexpr(paste0("(?<![A-Za-z0-9_.])", f, "\\("), body, perl = TRUE)
 ok(pos("phase_patient_input") < pos("materialize_cohort_input") &&
-     pos("materialize_cohort_input") < pos("check_mdv_source") &&
      pos("materialize_cohort_input") < pos("phase_mma_map"),
    "pinned before the first phase that joins it")
+ok(pos("check_mdv_source") > 0 && pos("check_mdv_source") < pos("write_build_status") &&
+     pos("check_mdv_source") < pos("phase_codelists"),
+   "the MDV column check runs before the status row and the first write")
 
 cat("\n-- every MDV column the extraction reads is asked for first --\n")
 # The Optum engine profiled claim NDCs here. MDV receipt codes are not padded,
@@ -1285,8 +1320,8 @@ le <- new.env(parent = globalenv())
 sys.source(file.path(ROOT, "R", "build_lot.R"), envir = le)
 assign("log_msg", function(...) invisible(NULL), envir = le)
 assign("lot_out", function(x) x, envir = le)
-# No hand-rolled substitution here: testutil.R's stand-in interpolates for real,
-# so {tbl} and {cfg$max_lot} resolve from the calling frame the way glue would.
+# No hand-rolled substitution here: the real glue interpolates, so {tbl} and
+# {cfg$max_lot} resolve from the calling frame exactly as they do in a run.
 # A stub that rewrites one fixed placeholder goes quietly inert the moment that
 # variable is renamed.
 LL_OK <- list(n_rows = 100, n_patients = 40, n_null_start = 0, n_null_end = 0,
@@ -1828,11 +1863,13 @@ cl_flat <- paste(cl_lines, collapse = " ")
 env_read <- unique(unlist(regmatches(cl_flat,
   gregexpr('(?<=Sys\\.getenv\\(")[A-Z][A-Z0-9_]+', cl_flat, perl = TRUE))))
 # The MDV table, column and value names are read in R/mdv_source.R, through
-# .mdv_env(), which is Sys.getenv() with a default.
+# .mdv_env(), which is Sys.getenv() with a default, and .mdv_col_opt(), the
+# same for a column that may be NONE.
 ms_flat <- paste(readLines(file.path(ROOT, "R", "mdv_source.R"), warn = FALSE),
                  collapse = " ")
 env_read <- c(env_read, unique(unlist(regmatches(ms_flat,
-  gregexpr('(?<=\\.mdv_env\\(")[A-Z][A-Z0-9_]+', ms_flat, perl = TRUE)))))
+  gregexpr('(?:(?<=\\.mdv_env\\(")|(?<=\\.mdv_col_opt\\("))[A-Z][A-Z0-9_]+', ms_flat,
+           perl = TRUE)))))
 unread <- setdiff(cnames, c(names(ENV2CFG), env_read,
                             paste0("APPLY_", toupper(vapply(lc, `[[`, character(1), "name")))))
 ok(length(unread) == 0,

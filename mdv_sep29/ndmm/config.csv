@@ -12,6 +12,7 @@ FU_CE_DAYS,0,Days after index the patient must still be observed at the hospital
 OUTPATIENT_WINDOW_MONTHS,3,Two outpatient MM diagnosis months at most this many months apart confirm a diagnosis (the Optum rule's 90 days)
 OTHER_MALIG_WINDOW_MONTHS,1,Two outpatient months for one cancer at most this many months apart confirm it (the Optum rule's 30 days)
 MIN_AGE,18,Minimum age in the MM-diagnosis year
+NDMM_INDEX_EXCLUDED_ABBRS,PANO|ELOT,"Agents barred from setting the 1L index beyond belantamab (protocol I3: panobinostat and elotuzumab). Pinned in the contract; separate with |"
 CODELIST_DIR,/mnt/code/codelist_mdv,Where the MDV code lists live (MDV vocabulary; not the Optum lists)
 MDV_TBL_DISEASE,diseasedata,MDV diagnosis table (base name)
 MDV_TBL_PATIENT,patientdata,MDV patient table (base name)
@@ -22,7 +23,7 @@ MDV_COL_PATIENTID,patientid,Patient key in every table
 MDV_COL_DATAMONTH,datamonth,Claim month on the diagnosis table
 MDV_COL_NYUGAIKBN,nyugaikbn,Care setting on the diagnosis table
 MDV_COL_DISEASECODE,diseasecode,MDV disease code
-MDV_COL_ICD10,,ICD-10 code on the diagnosis table (blank = the delivery has none; code lists must then use DISEASECODE)
+MDV_COL_ICD10,NONE,ICD-10 code on the diagnosis table (NONE = the delivery has none; code lists must then use DISEASECODE)
 MDV_COL_UTAGAIFLG,utagaiflg,Suspected-diagnosis flag
 MDV_COL_CANCERFLG,cancerflg,Cancer-diagnosis flag
 MDV_COL_FROMDATE,fromdate,Day-level diagnosis date compared with the FF1 episode
@@ -32,12 +33,12 @@ MDV_COL_FF1STARTDATE,ff1startdate,FF1 admission date
 MDV_COL_FF1ENDDATE,ff1enddate,FF1 discharge date
 MDV_COL_CANCERFIRSTFLG,cancerfirstflg,FF1 first-occurrence cancer flag
 MDV_COL_CHEMOTHERAPYFLG,chemotherapyflg,FF1 chemotherapy flag
-MDV_COL_FF1_OUTCOME,,FF1 discharge outcome (blank = death is not observed; CONFIRM the name)
+MDV_COL_FF1_OUTCOME,NONE,FF1 discharge outcome (NONE = death is not observed; CONFIRM the name)
 MDV_COL_RECEIPTCODE,receiptcode,Receipt code on the drug master and the act table
 MDV_COL_RECEIPTNAME_ENG,receiptname_eng,English drug name on the drug master
 MDV_COL_ACTDATE,actdate,Date of an act
-MDV_COL_ACT_NYUGAIKBN,nyugaikbn,Care setting on the act table (blank = not carried)
-MDV_COL_ACT_DAYS,,Days supplied on the act table (blank = not carried; LOT imputes)
+MDV_COL_ACT_NYUGAIKBN,nyugaikbn,Care setting on the act table (NONE = not carried)
+MDV_COL_ACT_DAYS,NONE,Days supplied on the act table (NONE = not carried; LOT imputes)
 MDV_INPATIENT,2,nyugaikbn value for inpatient
 MDV_OUTPATIENT,1,nyugaikbn value for outpatient
 MDV_CONFIRMED,0,utagaiflg value for a confirmed diagnosis

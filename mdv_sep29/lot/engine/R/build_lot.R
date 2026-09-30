@@ -91,7 +91,11 @@ WAIVABLE_CHECKS <- c("orphan_meds", "uncoded_meds", "code_types",
                      # MDV: a NAME_ENG pattern that finds no drug (an agent not
                      # sold in Japan), and a receipt code that is not nine
                      # digits (a delivery keyed another way).
-                     "unresolved_names", "receipt_shape")
+                     "unresolved_names", "receipt_shape",
+                     # The same on the SCT list: a CAR-T product pattern that
+                     # finds nothing, checked in 05_sct.R. Most likely a typo,
+                     # and one that removes CAR-T events silently.
+                     "sct_unresolved_names")
 
 # Fatal checks: always stop the build. Named rather than merely absent, so a
 # waiver naming one is told why it is refused instead of "no such check".
@@ -676,6 +680,10 @@ build_lot <- function(here, cohort_table, prefix,
   cohort_status <- check_cohort_build(con, cfg)
   options(lot_cohort_run_id = cohort_status$run_id,
           lot_cohort_stamp  = as.character(cohort_status$stamp))
+  # Every MDV column the extraction reads, before the run's status row and the
+  # first write: a column this delivery spells differently stops the run with
+  # nothing written, like every other preflight check.
+  check_mdv_source(con, cfg)
 
   # LOT1 is written before LOT_LONG, so track partial runs.
   # Cleared first, or a second run in one session inherits the first's.
@@ -705,7 +713,6 @@ build_lot <- function(here, cohort_table, prefix,
   # The snapshot exists now, so ask again: nothing may have replaced the cohort
   # between the check above and this copy.
   recheck_cohort_build(con, cfg, cohort_status)
-  check_mdv_source(con, cfg)
   phase_mma_map(con, ctx)
   # Transplant dates before the regimen. phase_sct reads only
   # lot_patient_input, the code lists and raw claims - nothing line-shaped -
@@ -1449,7 +1456,13 @@ FINAL_METADATA_COLS <- c(N_LOT_LONG_ROWS = "BIGINT",
                          COHORT_RUN_ID = "STRING",
                          # A re-run keeps its run id, so the id alone does not
                          # name an attempt. This moves every time.
-                         COHORT_STAMP = "STRING")
+                         COHORT_STAMP = "STRING",
+                         # Every MDV table, column and value mapping the
+                         # extraction read (mdv_source_settings()), the string
+                         # the cohort build records too. Not in CONTRACT: a
+                         # changed days-supplied column is a different
+                         # extraction that CONTRACT_SETTINGS cannot show.
+                         MDV_SOURCE = "STRING")
 
 record_final_counts <- function(con, cfg, counts, final) {
   tbl <- lot_out("LOT_RUN_METADATA")
@@ -1489,7 +1502,8 @@ record_final_counts <- function(con, cfg, counts, final) {
            COHORT_STAMP = {sql_text(getOption('lot_cohort_stamp', NA_character_))},
            STUDY_START = {sql_text(cfg$study_start)},
            STUDY_END = {sql_text(cfg$study_end)},
-           LINE_CRITERIA_APPLIED = {sql_text(getOption('lot_line_criteria', ''))}
+           LINE_CRITERIA_APPLIED = {sql_text(getOption('lot_line_criteria', ''))},
+           MDV_SOURCE = {sql_text(mdv_source_settings())}
      WHERE RUN_ID = '{run_id}'"))
   log_msg("Recorded LOT_LONG: ", counts$n_rows, " lines for ",
           counts$n_patients, " patients (", dist, "); LOT_LONG_FINAL: ",

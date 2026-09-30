@@ -23,11 +23,11 @@ and what it does.
 |---|---|
 | `engine/R/mdv_source.R` | new; the same file as `../ndmm/R/mdv_source.R`. Every MDV table, column and value code, and the staged selects |
 | `engine/R/config_lot.R`, `engine/config.csv` | `MDV_SCHEMA`, `MDV_VINTAGE`, the `MDV_*` names; `ORAL_DAYS_DEFAULT`; `CENSOR_AT_DISENROLLMENT` TRUE; `CODELIST_DIR` the MDV lists |
-| `engine/R/build_lot.R` | the MDV `CONTRACT`; `check_mdv_source()` (every column read exists) in place of the NDC profile; the MDV code-list checks among the waivable and fatal ones; a `con` argument the test suite uses |
-| `engine/R/steps/01_codelists.R` | the drug list's `RECEIPTCODE` and `NAME_ENG` rows, resolved to receipt codes (`MMA_RECEIPTS`); `CL_ROUTE`; the checks `unresolved_names`, `receipt_shape` (waivable), `route`, `multi_route` (fatal), and `code_to_med` on resolved codes. The NDC checks are gone |
+| `engine/R/build_lot.R` | the MDV `CONTRACT`; `check_mdv_source()` (every column read exists) in place of the NDC profile, run in the preflight before anything is written; the MDV code-list checks among the waivable and fatal ones; `MDV_SOURCE` on `LOT_RUN_METADATA`; a `con` argument the test suite uses |
+| `engine/R/steps/01_codelists.R` | the drug list's `RECEIPTCODE` and `NAME_ENG` rows, resolved to receipt codes (`MMA_RECEIPTS`); `CL_ROUTE`; the checks `unresolved_names`, `receipt_shape` (waivable), `route`, `multi_route` (fatal), and `code_to_med` on resolved codes, each independent of the others. The NDC checks are gone |
 | `engine/R/steps/02_patient_input.R` | the observation-end log line and comment read for MDV, where censoring at the last record is the contract; the SQL is unchanged |
 | `engine/R/steps/03_mma_map.R` | split: `phase_mma_extract()` reads `actdata` (the MDV half); `phase_map()` is the Optum MAP, unchanged |
-| `engine/R/steps/05_sct.R` | split: `phase_sct_extract()` reads acts and confirmed diagnoses (the MDV half); `phase_sct_cluster()` is the Optum AUTO clustering and ALLO/CAR-T ordering, unchanged |
+| `engine/R/steps/05_sct.R` | split: `phase_sct_extract()` reads acts and confirmed diagnoses (the MDV half), and stops on a `NAME_ENG` pattern matching nothing (`sct_unresolved_names`, waivable); `phase_sct_cluster()` is the Optum AUTO clustering and ALLO/CAR-T ordering, unchanged but for its comment on the tandem mark (`LOT_RULES.md` §6.1) |
 | `engine/R/db_utils_lot.R`, `engine/R/steps/07_qc.R`, `engine/R/steps/06_lot1_end.R` | the Optum NDC helper and its comments removed |
 | `engine/R/melp_rule.R` | comments only: they pointed at the Optum build's melphalan package, which is not in this folder |
 

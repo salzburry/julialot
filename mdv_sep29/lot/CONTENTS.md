@@ -64,9 +64,13 @@ study's numbers. On MDV the first ones to run are the day-supply values
 (`README.md`, "Day supply"):
 
 ```bash
-LOT_CONTRACT_OVERRIDE=TRUE MEDICAL_DAY_SUPPLY=21 \
+LOT_CONTRACT_OVERRIDE=TRUE MEDICAL_DAY_SUPPLY=21 COHORT_PREFIX=mdv_ \
   Rscript engine/build.R mdv_NDMM_COHORT mdvds21_
 ```
+
+`COHORT_PREFIX` names the prefix the cohort was built under. It defaults to the
+output prefix, so without it this run looks for the cohort's build status under
+`mdvds21_`, finds none, and stops at the lineage check.
 
 ### The test suites
 
@@ -103,7 +107,7 @@ patient's last MDV record, and it is where every line is observed to
 |---|---|
 | `build.R` | Entry point. Takes a cohort table and an output prefix and builds every line for it. Starts the run log. |
 | `config.csv` | Every setting as `name,value,description`. |
-| `R/build_lot.R` | The runner, and `CONTRACT` — the pinned settings a run is checked against before it starts (`LOT_RULES.md` §1). Also the setting validators, the cohort-input checks, `check_mdv_source()` (every MDV column the extraction reads exists, checked before anything is written), `LOT_TABLES` (the declared list of what a run writes), the build status, the run metadata, the `LOT_LONG` checks, the funnel and the face-validity checks. |
+| `R/build_lot.R` | The runner, and `CONTRACT` — the pinned settings a run is checked against before it starts (`LOT_RULES.md` §1). Also the setting validators, the cohort-input checks, `check_mdv_source()` (every MDV column the extraction reads exists, checked in the preflight, before the status row and any other write), `LOT_TABLES` (the declared list of what a run writes), the build status, the run metadata, the `LOT_LONG` checks, the funnel and the face-validity checks. |
 | `R/config_lot.R` | Reads the settings into the run's config, the MDV schema, vintage, table and column names among them. |
 | `R/mdv_source.R` | Every MDV table, column and value code the engine reads, as settings, and the selects that read them. The same file as the cohort build's. |
 | `R/load_inputs.R` | Applies `config.csv` as defaults, never over a value already set. Normalises dates a spreadsheet has reformatted. |
@@ -143,7 +147,7 @@ finish or that deviated from the contract.
 | `LOT_ATTRITION` | the funnel, below |
 | `LOT_FACE_VALIDITY` | the face-validity checks, below |
 | `LOT_BUILD_STATUS` | one row per run: `STATE` (`started` once preflight passes, then `complete` or `failed`), the cohort, `STUDY_END`, the code-list waivers requested and applied, and `CONTRACT_DEVIATIONS` (empty on a contract build) |
-| `LOT_RUN_METADATA` | the settings the run used (`CONTRACT_SETTINGS`), the engine's code fingerprint (`CODE_MD5`), the study window, the cohort run it was built from, the line criteria applied (`LINE_CRITERIA_APPLIED`, as `no_belantamab=on:truncate:<patients failing>`), and the line counts |
+| `LOT_RUN_METADATA` | the settings the run used (`CONTRACT_SETTINGS`), the engine's code fingerprint (`CODE_MD5`), every MDV table, column and value mapping the extraction read (`MDV_SOURCE`, the string the cohort build records too), the study window, the cohort run it was built from, the line criteria applied (`LINE_CRITERIA_APPLIED`, as `no_belantamab=on:truncate:<patients failing>`), and the line counts |
 | `LOT_CODELIST_METADATA` | each code-list file's hash and row count |
 | `LOT_QC_SUMMARY` | one row per LOT1-stage consistency count (code-list medications with no rollup row, episodes ending before they start, LOT1 ending after observation, a transplant both tandem and single), each `PASS`, `WARN` or `ERROR` |
 | `LOT_PATIENT_INPUT`, `MAP_STACKED`, `TX_AUTO_DATES`, `TX_ALLO_CART_DATES`, `PERMISSIBLE_SUBS` | the inputs line assembly reads (`PORTING.md` gives their columns) |
@@ -217,7 +221,8 @@ once the study team has reviewed the finding:
 | `orphan_meds` | a code-list medication with no rollup row |
 | `uncoded_meds` | a rollup medication with no `RECEIPTCODE` or `NAME_ENG` row, which no act can match |
 | `code_types` | a code type other than `RECEIPTCODE` or `NAME_ENG` — an Optum NDC or HCPCS row, say — which nothing extracts |
-| `unresolved_names` | a `NAME_ENG` pattern that matches no drug in the drug master: right for an agent not sold in Japan, a misspelling otherwise |
+| `unresolved_names` | a `NAME_ENG` pattern that matches no drug in the drug master: right for an agent not sold in Japan, a misspelling otherwise. Checked whatever `uncoded_meds` found, so waiving one never skips the other |
+| `sct_unresolved_names` | the same on `cl_sct_codelist.csv`, checked in `R/steps/05_sct.R`: a CAR-T or transplant pattern matching no drug. Most likely a misspelling (`'%vicleucell%'`), and one that silently removes those events and moves the lines they end |
 | `receipt_shape` | a `RECEIPTCODE` that is not nine digits, which matches no act unless the delivery really keys drugs another way |
 | `subs_substitute` | a `substitute_med` the code list never produces |
 | `subs_original` | an `original_med` the code list never produces |
@@ -255,8 +260,10 @@ as its own substitute is dropped, each with a log line.
 
 The build also stops on a code list too short to be the production one (fewer
 than 20 rollup medications or 20 code-list entries: an MDV list naming drugs by
-pattern can be one row per agent), and on the SCT code-list checks in
-`R/steps/05_sct.R`, which are on neither list.
+pattern can be one row per agent), and on the other SCT code-list checks in
+`R/steps/05_sct.R` - a code naming two transplant types, an `SCT_TYPE` or code
+type nothing reads, `ICD10` rows with no ICD-10 column - which are on neither
+list. `sct_unresolved_names`, above, is the one SCT check that can be waived.
 
 **Steroids** are maintained separately, so their codes are not in
 `cl_mma_codelist.csv`, and both places that build the rollup drop them by class

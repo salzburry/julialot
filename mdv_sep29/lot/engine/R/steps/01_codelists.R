@@ -167,10 +167,13 @@ phase_codelists <- function(con) {
       paste(uncoded_meds$CL_MED_ABBR, collapse = ", ")), stringsAsFactors = FALSE))
   } else {
     log_msg("  OK: Every rollup med has an extractable RECEIPTCODE/NAME_ENG row.")
+  }
 
   # A NAME_ENG pattern matching no drug in the master finds nothing. Right for
   # an agent not sold in Japan, and the rollup names several; a misspelling
   # otherwise. Waivable, the way uncoded_meds is, once someone has read which.
+  # Its own check, whatever uncoded_meds found: nested under that check's
+  # success branch, an uncoded medication - waived or not - skipped it.
   unresolved <- db_q(con, "
     SELECT c.CL_MED_ABBR, c.CL_CODE
     FROM mma_extractable_codelist c
@@ -188,7 +191,6 @@ phase_codelists <- function(con) {
                   collapse = ", ")), stringsAsFactors = FALSE))
   } else {
     log_msg("  OK: Every NAME_ENG pattern matches a drug in the master.")
-  }
   }
 
   # Only these two are ever resolved and joined on. A code of any other type -
