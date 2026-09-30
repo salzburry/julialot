@@ -39,7 +39,9 @@ log. Someone who knows the Optum build can read this one.
    (`MDV_COL_ICD10`), and the care setting and days supplied on `actdata`
    (`MDV_COL_ACT_NYUGAIKBN`, `MDV_COL_ACT_DAYS`). Set them in both
    `ndmm/config.csv` and `lot/engine/config.csv`. A wrong name stops the run at
-   its first check, naming the table and the column.
+   its first check, naming the table and the column. The last four are
+   optional: write `NONE` for one the delivery does not carry (a blank means
+   the default).
 2. **Author the MDV code lists** (`codelists/README.md`) and put them in a
    folder of their own on production. The default is `/mnt/code/codelist_mdv`.
    The Optum lists will not load: every HCPCS, NDC and ICD-9 row is refused
@@ -88,8 +90,13 @@ values before one is chosen. Run each under its own prefix, recorded as a
 deviation:
 
 ```bash
-MEDICAL_DAY_SUPPLY=21 LOT_CONTRACT_OVERRIDE=TRUE ... Rscript lot/engine/build.R mdv_NDMM_COHORT mdvds21_
+MEDICAL_DAY_SUPPLY=21 LOT_CONTRACT_OVERRIDE=TRUE COHORT_PREFIX=mdv_ ... \
+  Rscript lot/engine/build.R mdv_NDMM_COHORT mdvds21_
 ```
+
+`COHORT_PREFIX=mdv_` says where the cohort was built. It defaults to the
+output prefix, so without it the run looks for the cohort's build status under
+`mdvds21_` and stops at the lineage check.
 
 ## Checking it without a warehouse
 

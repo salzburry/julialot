@@ -60,7 +60,11 @@ build_ndmm_flags <- function(con, elig_coh_final, map_stacked) {
     -- least(LOT1_START + NDMM_FU_CE_DAYS, study_end, death), and at LOT1_START
     -- itself - the floor, written as its own predicate as in the Optum build
     -- (DECISIONS.md #1). NDMM_FU_CE_DAYS is 0, and the index act is a record
-    -- on the index date, so every patient with an index passes.
+    -- on the index date, so every patient with an index passes - unless they
+    -- are recorded dead before it. The death date is the FF1 discharge date
+    -- as recorded, so a 1L start after it is a contradiction in the data, not
+    -- a patient who can be followed from the index (DECISIONS M12,
+    -- NDMM_DEATH_CONFLICTS).
     fuce AS (
       SELECT ec_l1.PATID,
              max(CASE WHEN o.OBS_START_DT <= ec_l1.LOT1_START_DT
@@ -68,6 +72,8 @@ build_ndmm_flags <- function(con, elig_coh_final, map_stacked) {
                                                    date('{cfg$study_end}'),
                                                    coalesce(ec_l1.DEATH_DT, date('{cfg$study_end}')))
                        AND o.OBS_END_DT   >= ec_l1.LOT1_START_DT
+                       AND (ec_l1.DEATH_DT IS NULL
+                            OR ec_l1.DEATH_DT >= ec_l1.LOT1_START_DT)
                       THEN 1 ELSE 0 END) AS CE_fu
       FROM ec_l1
       LEFT JOIN {NDMM_OBS_PERIOD} o ON o.PATID = ec_l1.PATID

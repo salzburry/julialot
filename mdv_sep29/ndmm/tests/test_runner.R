@@ -74,6 +74,7 @@ ORDER <- c("check_settings", "pin_output_schema", "pin_prefix",
            "build_ndmm_flags",
            "build_ndmm_clintrial_flags", "report_ndmm_clintrial",
            "build_ndmm_fu_ce_counts", "build_ndmm_preg_window_counts",
+           "build_ndmm_death_conflicts",
            "build_ndmm_mm_dx_rules",
            "ndmm_counts",
            "check_attrition_monotonic", "build_ndmm_cohort_table",
@@ -1251,9 +1252,12 @@ ok(grepl("year(i.INDEX_DATE) - d.YRDOB", csql, fixed = TRUE),
 ok(grepl("date_add(i.INDEX_DATE, 1)", csql, fixed = TRUE) &&
      length(gregexpr("date_add(i.INDEX_DATE, 1)", csql, fixed = TRUE)[[1]]) == 2L,
    "and both follow-up lengths run from it")
-ok(grepl("b.DEATH_DT < i.INDEX_DATE", csql, fixed = TRUE) &&
-     grepl("THEN i.INDEX_DATE ELSE b.DEATH_DT", csql, fixed = TRUE),
-   "an imputed death between the diagnosis and the 1L index is re-clamped at the index")
+# The FF1 discharge date is exact, so it is carried as recorded. The Optum
+# build clamped a death before the index to the index, which on MDV would
+# publish a date no record carries; criterion 5 refuses that patient instead.
+ok(grepl("SELECT b.PATID, b.DEATH_DT", csql, fixed = TRUE) &&
+     !grepl("THEN i.INDEX_DATE ELSE b.DEATH_DT", csql, fixed = TRUE),
+   "the death date is carried as recorded, never moved to the index")
 ok(grepl("max(o.OBS_END_DT) AS ENDDATE_CE", csql, fixed = TRUE) &&
      grepl("INNER JOIN _ndmm_obs_period o ON o.PATID = i.PATID", csql, fixed = TRUE),
    "ENDDATE_CE is the patient's last MDV record, the MDV reading of the end of enrollment")
@@ -1296,8 +1300,8 @@ ok(grepl("end before they begin", m, fixed = TRUE),
 # end. The two definitions of "one day of follow-up" have to be the same one.
 m <- drive_chk(nofu = 4L)
 ok(grepl("less follow-up than criterion 5", m, fixed = TRUE) &&
-     grepl(paste0("FU_DAYS < ", se$NDMM_FU_CE_DAYS), m, fixed = TRUE),
-   "...and so does one with less follow-up than criterion 5 asked for")
+     grepl(paste0("FU_DAYS_CE < least(", se$NDMM_FU_CE_DAYS, ", FU_DAYS)"), m, fixed = TRUE),
+   "...and so does one with less follow-up than criterion 5 asked for, capped as it caps it")
 m <- drive_chk(pat = 9L, expect = 10L)  # rows follows pat, so this is not a fan-out
 ok(grepl("attrition ends at", m, fixed = TRUE),
    "and a cohort that disagrees with its own funnel is not published")
@@ -1768,9 +1772,10 @@ read_env <- local({
   # it takes the name as an argument, so the Sys.getenv() call inside it
   # carries a variable and the name appears only at the call site.
   hit <- function(fn) regmatches(txt, gregexpr(paste0(fn, '\\("[A-Z0-9_]+"'), txt))[[1]]
-  # .mdv_env() is R/mdv_source.R's Sys.getenv() with a default.
+  # .mdv_env() is R/mdv_source.R's Sys.getenv() with a default, and
+  # .mdv_col_opt() the same for a column that may be NONE.
   unique(gsub('^[A-Za-z_.]+\\("|"$', "", c(hit("Sys\\.getenv"), hit("subseq_days"),
-                                            hit("\\.mdv_env"))))
+                                            hit("\\.mdv_env"), hit("\\.mdv_col_opt"))))
 })
 unread <- setdiff(cnames, read_env)
 ok(length(unread) == 0,
@@ -2276,6 +2281,54 @@ local({
        paste0("...and ", launcher, " says so to the shell and in its run log"))
   }
   if (nzchar(lib)) unlink(lib, recursive = TRUE)
+})
+
+
+cat("\n-- an optional MDV column can be declared absent --\n")
+# Blank cannot mean "absent": the loader fills a blank variable from config.csv
+# and skips a blank config.csv value, so blank always comes back as the
+# default. NONE says it, from the environment or from config.csv, and the
+# column then leaves the preflight's required list.
+local({
+  vars <- c("MDV_COL_ACT_NYUGAIKBN", "MDV_COL_BIRTH")
+  saved <- Sys.getenv(vars, unset = NA)
+  on.exit(for (v in vars) if (is.na(saved[[v]])) Sys.unsetenv(v)
+                          else do.call(Sys.setenv, setNames(list(saved[[v]]), v)))
+  fresh <- function() {
+    e <- new.env(parent = globalenv())
+    sys.source(file.path(ROOT, "R", "mdv_source.R"), envir = e)
+    e
+  }
+  cfg_dir <- file.path(tempdir(), "mdv_none_cfg")
+  dir.create(cfg_dir, showWarnings = FALSE)
+  write_cfg <- function(v) writeLines(c("name,value,description",
+    paste0("MDV_COL_ACT_NYUGAIKBN,", v, ",setting")), file.path(cfg_dir, "config.csv"))
+
+  Sys.setenv(MDV_COL_ACT_NYUGAIKBN = "NONE")
+  e <- fresh()
+  ok(identical(e$MDV_COLS$act_nyugaikbn, "") &&
+       !"nyugaikbn" %in% e$mdv_required_columns("act")$act,
+     "MDV_COL_ACT_NYUGAIKBN=NONE in the environment drops the column from the preflight")
+  ok(grepl("col.act_nyugaikbn=NONE", e$mdv_source_settings(), fixed = TRUE),
+     "...and the run records it as NONE")
+
+  Sys.unsetenv("MDV_COL_ACT_NYUGAIKBN"); write_cfg("NONE")
+  suppressMessages(load_pipeline_inputs(cfg_dir, "config.csv"))
+  e <- fresh()
+  ok(identical(e$MDV_COLS$act_nyugaikbn, "") &&
+       !"nyugaikbn" %in% e$mdv_required_columns("act")$act,
+     "so does NONE written in config.csv")
+
+  Sys.setenv(MDV_COL_ACT_NYUGAIKBN = ""); write_cfg("nyugaikbn")
+  suppressMessages(load_pipeline_inputs(cfg_dir, "config.csv"))
+  ok(identical(fresh()$MDV_COLS$act_nyugaikbn, "nyugaikbn"),
+     "a blank variable still takes config.csv's value - blank is the default, not absent")
+
+  Sys.unsetenv("MDV_COL_ACT_NYUGAIKBN"); Sys.setenv(MDV_COL_BIRTH = "NONE")
+  e <- fresh()
+  ok(any(grepl("'birth' = NONE, and only", e$check_mdv_settings(), fixed = TRUE)),
+     "NONE on a column the rules cannot do without is refused by name")
+  unlink(cfg_dir, recursive = TRUE)
 })
 
 

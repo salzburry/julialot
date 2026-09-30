@@ -25,9 +25,10 @@ cfg_defaults <- list(
   # How belantamab is spelled in cl_mma_codelist.csv; see
   # standalone_constants.R. Pinned because a criterion turns on it.
   belantamab_abbr   = Sys.getenv("NDMM_BELANTAMAB_ABBR", unset = "BELA"),
-  # Agents barred from setting the 1L index beyond belantamab. Empty unless the
-  # study team names one; see standalone_constants.R and NDMM_INDEX_AGENTS.
-  index_excluded_abbrs = Sys.getenv("NDMM_INDEX_EXCLUDED_ABBRS", unset = ""),
+  # Agents barred from setting the 1L index beyond belantamab: protocol I3's
+  # panobinostat and elotuzumab. Pinned in CONTRACT; see
+  # standalone_constants.R and NDMM_INDEX_AGENTS.
+  index_excluded_abbrs = Sys.getenv("NDMM_INDEX_EXCLUDED_ABBRS", unset = "PANO|ELOT"),
   # The same, by receipt code or name pattern rather than by abbreviation.
   index_excluded_codes = Sys.getenv("NDMM_INDEX_EXCLUDED_CODES", unset = ""),
   # Whether a plasma-cell disorder in remission still excludes as another

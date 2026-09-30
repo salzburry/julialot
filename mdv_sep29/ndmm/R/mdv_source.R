@@ -15,12 +15,22 @@
 # wrong name stops the run by name rather than failing inside a step.
 #
 # Settings are read from the environment, which config.csv fills where a
-# variable is unset. A blank optional column means "this delivery does not
-# have it", and the rule that would read it says what it does instead.
+# variable is unset or blank. So a blank setting means "the default", never
+# "absent": the settings loader fills a blank variable from config.csv (Domino
+# defines an unset project variable as empty) and skips a blank config.csv
+# value. An optional column the delivery does not carry is written NONE, in
+# the environment or in config.csv, and the rule that would read it says what
+# it does instead.
 
 .mdv_env <- function(name, default) {
   v <- trimws(Sys.getenv(name, unset = ""))
   if (nzchar(v)) v else default
+}
+
+MDV_NONE <- "NONE"
+.mdv_col_opt <- function(name, default) {
+  v <- .mdv_env(name, default)
+  if (identical(toupper(v), MDV_NONE)) "" else v
 }
 
 # ---- tables -----------------------------------------------------------------
@@ -35,13 +45,14 @@ MDV_TABLES <- list(
 )
 
 # ---- columns ----------------------------------------------------------------
-# A blank value is allowed only where MDV_OPTIONAL_COLUMNS says so.
+# Only the columns in MDV_OPTIONAL_COLUMNS may be absent, written NONE; each is
+# then "" here, left out of the preflight, and read as NULL.
 MDV_COLS <- list(
   patientid       = .mdv_env("MDV_COL_PATIENTID",       "patientid"),       # (OC) every table
   datamonth       = .mdv_env("MDV_COL_DATAMONTH",       "datamonth"),       # (OC) disease: claim month
   nyugaikbn       = .mdv_env("MDV_COL_NYUGAIKBN",       "nyugaikbn"),       # (OC) disease: 1 outpatient, 2 inpatient
   diseasecode     = .mdv_env("MDV_COL_DISEASECODE",     "diseasecode"),     # (OC) disease: MDV disease code
-  icd10           = .mdv_env("MDV_COL_ICD10",           ""),                # (confirm) disease: ICD-10, if the delivery carries one
+  icd10           = .mdv_col_opt("MDV_COL_ICD10",       ""),                # (confirm) disease: ICD-10, if the delivery carries one
   utagaiflg       = .mdv_env("MDV_COL_UTAGAIFLG",       "utagaiflg"),       # (OC) disease: 0 confirmed, else suspected
   cancerflg       = .mdv_env("MDV_COL_CANCERFLG",       "cancerflg"),       # (OC) disease: 1 cancer diagnosis
   fromdate        = .mdv_env("MDV_COL_FROMDATE",        "fromdate"),        # (OC) disease: day-level date checked against FF1
@@ -51,12 +62,12 @@ MDV_COLS <- list(
   ff1enddate      = .mdv_env("MDV_COL_FF1ENDDATE",      "ff1enddate"),      # (OC) ff1: discharge date
   cancerfirstflg  = .mdv_env("MDV_COL_CANCERFIRSTFLG",  "cancerfirstflg"),  # (OC) ff1: 0 first occurrence
   chemotherapyflg = .mdv_env("MDV_COL_CHEMOTHERAPYFLG", "chemotherapyflg"), # (OC) ff1: non-zero chemotherapy given
-  ff1_outcome     = .mdv_env("MDV_COL_FF1_OUTCOME",     ""),                # (confirm) ff1: discharge outcome; blank = death not observed
+  ff1_outcome     = .mdv_col_opt("MDV_COL_FF1_OUTCOME", ""),                # (confirm) ff1: discharge outcome; NONE = death not observed
   receiptcode     = .mdv_env("MDV_COL_RECEIPTCODE",     "receiptcode"),     # (OC) drug master and act
   receiptname_eng = .mdv_env("MDV_COL_RECEIPTNAME_ENG", "receiptname_eng"), # (OC) drug master: English name
   actdate         = .mdv_env("MDV_COL_ACTDATE",         "actdate"),         # (OC) act: the day of the act
-  act_nyugaikbn   = .mdv_env("MDV_COL_ACT_NYUGAIKBN",   "nyugaikbn"),       # (confirm) act: setting; blank = not carried
-  act_days        = .mdv_env("MDV_COL_ACT_DAYS",        "")                 # (confirm) act: days supplied; blank = not carried
+  act_nyugaikbn   = .mdv_col_opt("MDV_COL_ACT_NYUGAIKBN", "nyugaikbn"),     # (confirm) act: setting; NONE = not carried
+  act_days        = .mdv_col_opt("MDV_COL_ACT_DAYS",    "")                 # (confirm) act: days supplied; NONE = not carried
 )
 
 MDV_OPTIONAL_COLUMNS <- c("icd10", "ff1_outcome", "act_nyugaikbn", "act_days")
@@ -92,8 +103,10 @@ mdv_split <- function(x) { v <- trimws(strsplit(x, "[|,]")[[1]]); v[nzchar(v)] }
 # The settings as one sorted string, recorded on the run so any count can be
 # traced to the column names and codes that produced it.
 mdv_source_settings <- function() {
+  cols <- unlist(MDV_COLS)
+  cols[!nzchar(cols)] <- MDV_NONE   # an absent optional column, said as such
   kv <- c(paste0("table.", names(MDV_TABLES), "=", unlist(MDV_TABLES)),
-          paste0("col.", names(MDV_COLS), "=", unlist(MDV_COLS)),
+          paste0("col.", names(MDV_COLS), "=", cols),
           paste0("value.", names(MDV_VALUES), "=", unlist(MDV_VALUES)))
   paste(sort(kv, method = "radix"), collapse = "|")
 }
@@ -113,6 +126,10 @@ check_mdv_settings <- function() {
       if (!k %in% MDV_OPTIONAL_COLUMNS)
         bad <- c(bad, paste0("MDV column '", k, "' is blank, and the rules ",
                              "cannot run without it"))
+    } else if (identical(toupper(v), MDV_NONE)) {
+      bad <- c(bad, paste0("MDV column '", k, "' = ", MDV_NONE, ", and only ",
+                           paste(MDV_OPTIONAL_COLUMNS, collapse = ", "),
+                           " may be absent"))
     } else if (!grepl(ident, v))
       bad <- c(bad, paste0("MDV column '", k, "' = '", v,
                            "' is not a column name"))

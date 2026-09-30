@@ -33,6 +33,14 @@ if (!have_duck) {
 
 work <- file.path(tempdir(), "mdv_ndmm")
 fx <- write_mdv_fixture(work)
+# A second delivery, 2026q3, whose act table carries no care-setting column -
+# the delivery MDV_COL_ACT_NYUGAIKBN=NONE is for.
+write_mdv_fixture(work, vintage = "2026q3")
+local({
+  f <- file.path(work, "clnprw_mdv_all_use.t_actdata_2026q3.csv")
+  a <- utils::read.csv(f, stringsAsFactors = FALSE, colClasses = "character")
+  utils::write.csv(a[, names(a) != "nyugaikbn"], f, row.names = FALSE, na = "")
+})
 Sys.setenv(CODELIST_DIR = fx$codelists, PROJECT_WORK_SCHEMA = "wk",
            OUTPUT_DIR = work, PIPELINE_LOG_FILE = file.path(work, "run.log"),
            DOMINO_RUN_ID = "mdvtest1",
@@ -91,7 +99,11 @@ if (!inherits(res, "error")) {
   row <- function(p) coh[coh$PATID == p, , drop = FALSE]
   ok(identical(row("P17")$DEATH_DT, "2021-03-01") && identical(row("P17")$ENDDATE, "2021-03-01"),
      "P17 dies at the FF1 discharge whose outcome is a death code, and ENDDATE is that day")
-  ok(all(is.na(coh$DEATH_DT[coh$PATID != "P17"])), "nobody else dies")
+  ok(identical(row("P27")$DEATH_DT, "2020-07-15") && identical(as.integer(row("P27")$FU_DAYS), 5L),
+     "P27 dies five days after the index, on the discharge date as recorded")
+  ok(all(is.na(coh$DEATH_DT[!coh$PATID %in% names(EXPECTED$death)])), "nobody else dies")
+  ok(!any(!is.na(coh$DEATH_DT) & coh$DEATH_DT < coh$INDEX_DATE),
+     "no cohort row has a death before its index")
   ok(identical(row("P20")$ENDDATE_CE, "2021-01-20"),
      "P20 was last seen at discharge, so ENDDATE_CE is 2021-01-20")
   ok(identical(row("P20")$ENDDATE, "2026-03-31"),
@@ -117,10 +129,27 @@ if (!inherits(res, "error")) {
   rc <- q(paste("SELECT med_abbr, code_type, RECEIPTCODE, NAME_ENG FROM", W("NDMM_MMA_RECEIPTS")))
   ok(any(rc$med_abbr == "CARF" & rc$code_type == "NAME_ENG" & rc$RECEIPTCODE == "620000004"),
      "'%carfilzomib%' finds the master's KYPROLIS (Carfilzomib) receipt code, case-insensitively")
-  ok(!any(rc$med_abbr == "DEX"), "steroids are not MM therapy")
+  ok(!any(rc$med_abbr == "DEX"), "steroids are not MM therapy, spelled ' DEX ' or not")
+  ok(!"P26" %in% coh$PATID,
+     "P26, whose only listed drug is dexamethasone, has no 1L index")
+  ok("P23" %in% coh$PATID,
+     "P23's baseline dexamethasone is not prior MM therapy, so she stays")
   ok(!any(rc$med_abbr == "POM"), "a pattern matching no drug in the master resolves to nothing")
   ag <- q(paste("SELECT MED_ABBR, ELIGIBLE, N_PATIENTS FROM", W("NDMM_INDEX_AGENTS")))
   ok(identical(ag$ELIGIBLE[ag$MED_ABBR == "BELA"], 0L), "belantamab may not set the index")
+  ok(identical(ag$ELIGIBLE[ag$MED_ABBR == "PANO"], 0L) &&
+       identical(ag$ELIGIBLE[ag$MED_ABBR == "ELOT"], 0L),
+     "nor may panobinostat or elotuzumab, by the contract's default (protocol I3)")
+  ok(!"P24" %in% coh$PATID, "P24, started on panobinostat alone, is not in the cohort")
+
+  cat("\n-- a death is kept as recorded; acts after it are listed --\n")
+  dc <- q(paste("SELECT PATID, cast(DEATH_DT as string) AS DEATH_DT,",
+                "DEATH_BEFORE_INDEX, N_MM_TX_AFTER_DEATH FROM", W("NDMM_DEATH_CONFLICTS")))
+  ok(identical(dc$PATID, "P25") && identical(dc$DEATH_DT, "2020-06-12"),
+     "P25's act after her 2020-06-12 death is the one conflict, with the date as recorded")
+  ok(identical(dc$DEATH_BEFORE_INDEX, 1L) && identical(dc$N_MM_TX_AFTER_DEATH, 1L),
+     "her 1L start falls after the death, and it is MM therapy")
+  ok(!"P25" %in% coh$PATID, "so she fails criterion 5 rather than having her death moved")
   ok(isTRUE(ag$N_PATIENTS[ag$MED_ABBR == "CARF"] >= 1L), "carfilzomib set P18's index")
 
   cat("\n-- belantamab after the index goes to lot --\n")
@@ -149,6 +178,10 @@ if (!inherits(res, "error")) {
      "and every column name it read")
   ok(nrow(md) == 1L && grepl("contract deviation: codelist_dir", md$FINDINGS, fixed = TRUE),
      "a fixture code list is recorded as the contract deviation it is")
+  ok(nrow(md) == 1L && grepl("death_conflicts", md$FINDINGS, fixed = TRUE),
+     "and the acts after a death as a finding")
+  ex <- q(paste("SELECT INDEX_EXCLUDED FROM", W("NDMM_RUN_METADATA"), "WHERE RUN_ID = 'mdvtest1'"))
+  ok(identical(ex$INDEX_EXCLUDED, "PANO|ELOT"), "the run records PANO|ELOT as barred from the index")
   st <- q(paste("SELECT STATE FROM", W("NDMM_BUILD_STATUS"), "WHERE RUN_ID = 'mdvtest1'"))
   ok(identical(st$STATE, "complete"), "the build status is complete")
 }
@@ -169,6 +202,44 @@ if (!inherits(res2, "error")) {
             "leave; got ", paste(coh2, collapse = " ")))
 }
 Sys.unsetenv("NDMM_MDV_IP_RULE")
+
+cat("\n-- a 90-day follow-up requirement, capped at death --\n")
+# Criterion 5 caps the window at death; the final cohort check has to apply the
+# same cap, or a patient who passed the criterion stops the build.
+Sys.setenv(FU_CE_DAYS = "90", DOMINO_RUN_ID = "mdvtest5")
+load_ndmm_modules(ROOT); use_duck()
+res5 <- tryCatch(suppressMessages(capture.output(build_ndmm(ROOT, "ndmfu90_", con = "duck"))),
+                 error = function(e) e)
+if (inherits(res5, "error")) cat("  stopped: ", conditionMessage(res5), "\n")
+ok(!inherits(res5, "error"), "build_ndmm() completes with FU_CE_DAYS=90")
+if (!inherits(res5, "error")) {
+  coh5 <- q("SELECT PATID FROM wk.ndmfu90_NDMM_COHORT ORDER BY PATID")$PATID
+  ok("P27" %in% coh5, "P27, dead five days after the index, meets the capped window")
+  ok(!"P20" %in% coh5, "P20, alive and last seen eight days after the index, does not")
+}
+Sys.unsetenv("FU_CE_DAYS")
+
+cat("\n-- an act table with no care-setting column, declared NONE --\n")
+Sys.setenv(MDV_VINTAGE = "2026q3", DOMINO_RUN_ID = "mdvtest6")
+load_ndmm_modules(ROOT); use_duck()
+res6 <- tryCatch(suppressMessages(capture.output(build_ndmm(ROOT, "ndmq3a_", con = "duck"))),
+                 error = function(e) conditionMessage(e))
+ok(is.character(res6) && length(res6) == 1L && grepl("no column nyugaikbn", res6, fixed = TRUE),
+   "left at its default, the missing act column is refused at the preflight")
+Sys.setenv(MDV_COL_ACT_NYUGAIKBN = "NONE", DOMINO_RUN_ID = "mdvtest7")
+load_ndmm_modules(ROOT); use_duck()
+res7 <- tryCatch(suppressMessages(capture.output(build_ndmm(ROOT, "ndmq3b_", con = "duck"))),
+                 error = function(e) e)
+if (inherits(res7, "error")) cat("  stopped: ", conditionMessage(res7), "\n")
+ok(!inherits(res7, "error"), "declared NONE, the build runs without it")
+if (!inherits(res7, "error")) {
+  coh7 <- q("SELECT PATID FROM wk.ndmq3b_NDMM_COHORT ORDER BY PATID")$PATID
+  ok(identical(coh7, sort(EXPECTED$cohort)), "and builds the same cohort, which reads no act setting")
+  md7 <- q("SELECT MDV_SOURCE FROM wk.ndmq3b_NDMM_RUN_METADATA WHERE RUN_ID = 'mdvtest7'")
+  ok(grepl("col.act_nyugaikbn=NONE", md7$MDV_SOURCE, fixed = TRUE),
+     "and records the column as NONE")
+}
+Sys.unsetenv(c("MDV_VINTAGE", "MDV_COL_ACT_NYUGAIKBN"))
 
 cat("\n-- a value code that is not this delivery's stops the run --\n")
 Sys.setenv(MDV_INPATIENT = "9", DOMINO_RUN_ID = "mdvtest3")

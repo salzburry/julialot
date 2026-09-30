@@ -19,6 +19,9 @@ reading of how the rules interact, and the first warehouse run settles it.
 | `induction_lot1_beyond` | Agent added the day after LOT1 induction closes | `induction_window_days = 60` | Not part of LOT1's regimen. It is an addition, not an induction agent. | derived |
 | `induction_lotn_within` | Agent added on the last day of a later line's induction | `lot_n_induction_window_days = 30` | Joins LOT2's regimen. Later lines use 30 days, not LOT1's 60. | derived |
 | `induction_lotn_beyond` | Agent added the day after a later line's induction closes | `lot_n_induction_window_days = 30` | Not part of LOT2's regimen. | derived |
+| `auto_seam_straddle` | AUTO window across the tandem mark | - | One second transplant, dated day 207 - the claim closest to the tandem mark - not day 216, the window's last. It is inside sct_tandem_days, so the pair is a tandem and LOT1 does not end. Dated at its last claim it would be excess and end the line. | to_confirm |
+| `auto_seam_after` | AUTO window just past the tandem mark | - | One second transplant, dated day 212 - the claim closest to the mark, though the whole window is past it - not day 221. Past sct_tandem_days either way, so it is excess and ends LOT1; the seam rule moves the date the line ends, not whether it does. | to_confirm |
+| `auto_seam_far` | AUTO window clear of the tandem mark | - | One second transplant, dated day 231 - the window's last claim, the infusion (6.1). No claim is within sct_auto_window_days of the mark, so the seam rule does not apply. | derived |
 | `allo_single_day` | Allogeneic transplant line spans one day | - | The ALLO line starts and ends on the transplant date. The next day's medication starts the line after it. The ALLO line carries NO regimen string - induction rows are suppressed for it - which is why anything reading LOT_BASE_MEDS to decide a line exists will miss it. | derived |
 | `allo_after_failed_auto` | Allogeneic transplant after a failed autologous | - | The AUTO sits inside LOT1. The ALLO ends the line it falls in and opens a one-day SCT_ALLO line. | to_confirm |
 | `biosimilar_switch` | Biosimilar substituted mid-line | - | No new line. A permissible substitute is the same agent for line purposes, and the pair is declared in permissible_subs.csv - so whether this holds depends on that file, not on this rule. | to_confirm |
@@ -120,6 +123,24 @@ reading of how the rules interact, and the first warehouse run settles it.
 - timeline: d+0 MED (LOT2 starts); d+30 MED_ADD (agent added one day outside)
 - why it is hard: The later-line window closes sooner than a reader expects.
 - rule: lot/engine/R/steps/10_lot2_5_base.R | ELSE {induction_window_days - 1} END)
+
+**auto_seam_straddle** - AUTO window across the tandem mark
+
+- timeline: d+0 MED (1L regimen starts); d+30 AUTO (first autologous transplant); d+207 AUTO (code three days inside the tandem window); d+216 AUTO (code in the same window, six days past it)
+- why it is hard: The seam rule exists for this window: which side of the mark a billing episode lands on decides tandem or excess.
+- rule: lot/engine/R/steps/05_sct.R | coalesce(s.cur_boundary_dt, s.cur_max_dt)
+
+**auto_seam_after** - AUTO window just past the tandem mark
+
+- timeline: d+0 MED (1L regimen starts); d+30 AUTO (first autologous transplant); d+212 AUTO (code two days past the tandem window); d+221 AUTO (code in the same window, eleven days past it)
+- why it is hard: The reading the code's worked example pins, and the one a straddle-only reading of the rule would date differently.
+- rule: lot/engine/R/steps/05_sct.R | coalesce(s.cur_boundary_dt, s.cur_max_dt)
+
+**auto_seam_far** - AUTO window clear of the tandem mark
+
+- timeline: d+0 MED (1L regimen starts); d+30 AUTO (first autologous transplant); d+224 AUTO (code one day beyond a grouping window from the mark); d+231 AUTO (code in the same window)
+- why it is hard: Where the seam rule stops: every window further out is dated at its last claim.
+- rule: lot/engine/R/steps/05_sct.R | coalesce(s.cur_boundary_dt, s.cur_max_dt)
 
 **allo_single_day** - Allogeneic transplant line spans one day
 

@@ -73,8 +73,9 @@ any MDV rule.
 
 **M7. Death is an in-hospital discharge.** *Open; the column is to confirm.*
 MDV records death only as a DPC Form 1 discharge outcome (6 or 7 by default).
-The date is that discharge. Until `MDV_COL_FF1_OUTCOME` is set nobody dies,
-and the run records `death_not_observed`.
+The date is that discharge. Until `MDV_COL_FF1_OUTCOME` names the column
+nobody dies, and the run records `death_not_observed`. The date is used as
+recorded (M12).
 
 **M8. One act source for MM therapy.** *Signed off.* The Optum build's five
 claim arms (medical `PROC_CD`, `BILL_PROC_CD`, `NDC`; rx `NDC`;
@@ -93,6 +94,36 @@ check that replaces the Optum NDC and `ICD_FLAG` checks: `check_mdv_values()`
 profiles `nyugaikbn`, `utagaiflg`, `cancerflg` and the two date columns on the
 records the cohort reads, writes `NDMM_MDV_SOURCE_PROFILE`, and stops if a
 configured code matches none of them. It is waivable as `mdv_values`.
+
+**M11. Panobinostat and elotuzumab are barred by the contract.** *Signed off
+(protocol I3).* On Optum the bar was set in `config.csv` and enforced
+downstream: the study package refused a cohort that did not bar the agents its
+`COHORT_INDEX_EXCLUSIONS` named. Nothing reads the MDV cohort yet, so an empty
+default let a patient started on panobinostat enter as newly treated. The
+contract now pins `index_excluded_abbrs = PANO|ELOT`, the default in the code
+and in `config.csv`; any other value needs `NDMM_CONTRACT_OVERRIDE` and is
+recorded as a deviation. Each entry must still match a `CL_MED_ABBR` on the
+production list, or the build stops (section 3).
+
+**M12. A death date is kept as recorded.** *Open.* The Optum build clamped a
+death before the MM diagnosis to the diagnosis, and a death before the 1L
+index to the index (section 8), because its dates were constructed from a
+month. MDV's is an exact discharge date, and moving it published a date no
+record carries - a patient recorded dead on 12 June and treated on 15 June
+entered the cohort dead on 15 June. So the date is never moved. An act after a
+recorded death is a contradiction in the data, and nothing here can say which
+side is wrong:
+
+- every such patient is listed in `NDMM_DEATH_CONFLICTS`, and the run's
+  `FINDINGS` carries `death_conflicts`;
+- a 1L start after the death fails criterion 5 (`DEATH_BEFORE_INDEX = 1`): the
+  patient cannot be followed from an index the data says they did not reach;
+- a death after the 1L start keeps the patient, and a LOT run stops observing
+  at the death, so the later acts reach no line.
+
+Open because the alternative readings - trusting the acts and dropping the
+death, or the reverse - are the study team's. The review table counts the
+patients either would move.
 
 ---
 
@@ -170,9 +201,9 @@ separate list of first-line regimens; inventing one would shrink the cohort by
 a rule nobody could reproduce. I3 names the agents restricted to later lines,
 panobinostat and elotuzumab (protocol inclusion criterion I3, "Eligible 1L
 treatment"), and those are barred by name (`README.md` "Barring agents from
-the 1L index"). Every entry must match the code list or the build stops, and
-the study package refuses a cohort that did not bar the agents its
-`COHORT_INDEX_EXCLUSIONS` names.
+the 1L index"). Every entry must match the code list or the build stops. On
+Optum the study package refused a cohort that did not bar the agents its
+`COHORT_INDEX_EXCLUSIONS` named; on MDV the contract pins the bar (M11).
 
 Moves: barring an agent moves those patients' index to their next eligible
 claim, or out of the cohort if there is none. The barred agent is still MM
@@ -404,7 +435,8 @@ Status: open. The study text says months; the code uses days.
 
 ## 8. Death dates are constructed, not read
 
-*Optum only. On MDV death is an FF1 discharge date (M7).*
+*Optum only. On MDV death is an FF1 discharge date (M7), kept as recorded
+(M12): neither clamp below applies.*
 
 Rule: the CDM records death as year and month (`YMDOD`), sometimes year alone.
 `R/steps/00_mm_cohort.R` builds a date:

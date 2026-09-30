@@ -20,10 +20,14 @@ same nine criteria as the Optum cohort, in the same order, counted in
 - The two continuous-enrolment criteria are **observation** criteria. The
   first MDV record is at least 365 days before the index, and the patient is
   seen on the index date. `ENDDATE_CE` is the **last MDV record**.
-- **Death** is an FF1 discharge with a death outcome: in-hospital deaths only.
-  Nobody dies until `MDV_COL_FF1_OUTCOME` is set.
-- Panobinostat and elotuzumab must be barred from setting the index in
-  `config.csv`, as on Optum (DECISIONS 3).
+- **Death** is an FF1 discharge with a death outcome: in-hospital deaths only,
+  dated to the discharge **as recorded, never moved**. Nobody dies until
+  `MDV_COL_FF1_OUTCOME` names the column. A 1L start after a recorded death
+  fails criterion 5, and every act after a death is listed in
+  `NDMM_DEATH_CONFLICTS` (DECISIONS M12).
+- Panobinostat and elotuzumab are barred from setting the index by the
+  contract, `NDMM_INDEX_EXCLUDED_ABBRS=PANO|ELOT` (protocol I3; DECISIONS 3,
+  M11).
 - This cohort removes belantamab before the index only. The LOT build removes
   it from the index onward (DECISIONS 2).
 
@@ -106,6 +110,7 @@ deviation, as on Optum.
 | `OTHER_MALIG_WINDOW_MONTHS` | `1` | the other-cancer pair (Optum: 30 days) |
 | `MIN_AGE` | `18` | |
 | `NDMM_BELANTAMAB_ABBR` | `BELA` | must equal lot's `BELANTAMAB_MED_ABBR` |
+| `NDMM_INDEX_EXCLUDED_ABBRS` | `PANO\|ELOT` | agents barred from setting the 1L index beyond belantamab (protocol I3) |
 
 ### The MDV source
 
@@ -117,6 +122,12 @@ dictionary. They are `MDV_COL_BIRTH`, `MDV_COL_FF1_OUTCOME`, `MDV_COL_ICD10`,
 `MDV_COL_ACT_NYUGAIKBN` and `MDV_COL_ACT_DAYS`. The run records all of them in
 `NDMM_RUN_METADATA.MDV_SOURCE`.
 
+The last four are optional. A delivery that does not carry one says so with
+`NONE`, in the environment or in `config.csv`: the column then leaves the
+preflight and is read as absent. A blank setting means the default, not
+absent, because the settings loader fills a blank variable from `config.csv`
+and skips a blank value there. `NONE` on any other column is refused.
+
 ### Run choices
 
 Validated, recorded in `NDMM_RUN_METADATA`, and not pinned.
@@ -126,18 +137,22 @@ Validated, recorded in `NDMM_RUN_METADATA`, and not pinned.
 | `NDMM_MDV_IP_RULE` | `none` | `none` (`nyugaikbn` alone: the Optum rule), `ff1` (and inside an FF1 episode), `ff1_chemo` (and that episode a first cancer with chemotherapy: the OC rule) |
 | `NDMM_MDV_REQUIRE_CANCERFLG` | `TRUE` | `TRUE`, `FALSE` |
 | `NDMM_MM_ADJACENT_STATES` | `override` | as on Optum |
-| `NDMM_INDEX_EXCLUDED_ABBRS` | (empty) | `CL_MED_ABBR` patterns, separated by `\|`. Set `PANO\|ELOT` |
 | `NDMM_INDEX_EXCLUDED_CODES` | (empty) | receipt codes, `RECEIPTCODE:<code>` or bare |
 
 ### Barring agents from the 1L index
 
 The study's I3 (protocol inclusion criterion I3, "Eligible 1L treatment") bars
 panobinostat and elotuzumab from setting the 1L index. The build bars
-belantamab itself; name the others in `config.csv`:
+belantamab itself, and the contract pins the other two:
 
 ```
-NDMM_INDEX_EXCLUDED_ABBRS,PANO|ELOT,Exclude panobinostat and elotuzumab from eligible 1L index treatment
+NDMM_INDEX_EXCLUDED_ABBRS,PANO|ELOT,...
 ```
+
+It is the default in `config.csv` and in the code. Any other value is a
+different cohort, so it needs `NDMM_CONTRACT_OVERRIDE=TRUE` and is recorded as
+a deviation. On Optum the study package refused a cohort built without it;
+nothing reads the MDV cohort yet, so the cohort build holds itself to it.
 
 Separate entries with `|`. The code splits on `,` as well, but in `config.csv`
 a comma survives only while the value stays quoted, and an editor that drops
@@ -189,6 +204,7 @@ column still means something:
 | `NDMM_MM_DX_RULES` | **new**: criterion 1 under each reading (`../MDV_RULES.md`, section 2) |
 | `NDMM_MMA_RECEIPTS` | **new**: every receipt code the drug list resolved to, with its name. Read it before believing a count |
 | `NDMM_MDV_SOURCE_PROFILE` | **new**: MDV's value codes on the records the cohort reads |
+| `NDMM_DEATH_CONFLICTS` | **new**: every act after a recorded death (DECISIONS M12) |
 | `NDMM_INDEX_AGENTS`, `NDMM_FU_CE_COUNTS`, `NDMM_PREG_WINDOW_COUNTS`, `NDMM_OTHER_MALIG_GROUPS`, `_GRAIN`, `_CODES`, `NDMM_MM_ADJACENT_GROUPS`, `_CODES`, `NDMM_BELANTAMAB_RECONCILE` | the Optum build's review tables |
 | `NDMM_RUN_METADATA` | adds `MDV_VINTAGE`, `MDV_IP_RULE`, `MDV_REQUIRE_CANCERFLG`, `MDV_SOURCE` |
 | `NDMM_CODELIST_METADATA`, `NDMM_BUILD_STATUS` | as on Optum; LOT reads the status row |
@@ -211,6 +227,7 @@ shows what a code list actually did, so a decision is made on a number.
 | `NDMM_MM_ADJACENT_GROUPS` | every label containing `PLASMACYTOMA`, `PLASMA CELL`, `GAMMOPATHY` or `MYELOMA`, and every overridden label, with `OVERRIDDEN` and its code count. A plasma-cell label still excluding is named in the log | 4 |
 | `NDMM_MM_ADJACENT_CODES` | every code kept as the index disease rather than another cancer, with the label that kept it | 4 |
 | `NDMM_BELANTAMAB_RECONCILE` | every belantamab act of a cohort member up to that patient's `ENDDATE_CE`, the last MDV record, with `DAYS_FROM_INDEX`. All are on or after the index, so `lot`'s `no_belantamab` removes every patient listed | 2 |
+| `NDMM_DEATH_CONFLICTS` | every patient with an MDV act after their recorded death: `DEATH_DT` as recorded, `FIRST_ACT_AFTER_DEATH`, `LAST_ACT_AFTER_DEATH`, `N_ACTS_AFTER_DEATH`, `N_MM_TX_AFTER_DEATH`, and `DEATH_BEFORE_INDEX` (1 = the 1L start fell after the death, so the patient fails criterion 5). Any row also puts `death_conflicts` on the run's `FINDINGS` | M12 |
 
 `NDMM_PREG_WINDOW_COUNTS` is checked as it is written: both rows must
 partition the same population, the narrower window can only leave a larger
@@ -224,7 +241,7 @@ cohort, and the applied row must equal the cohort. A failure stops the run.
 | 2 | Adult | `year(diagnosis) - YRDOB >= 18` at the earliest qualifying date | `00_mm_cohort.R` |
 | 3 | Eligible 1L treatment | the first MM therapy act on or after the diagnosis month and 2019-01-01, excluding steroids, belantamab and barred agents | `00b_lot1_index.R`, `03_prior_therapy.R` |
 | 4 | 12 months of records before the index | first MDV record <= `index - 365` | `01_observation.R`, `06_flags.R` |
-| 5 | Observed during follow-up | last MDV record >= `index + FU_CE_DAYS` (or death) | `06_flags.R` |
+| 5 | Observed during follow-up | last MDV record >= `index + FU_CE_DAYS` (cut at death and the study end), and not recorded dead before the index | `06_flags.R` |
 | 6 | No MM therapy in the baseline | no MM therapy act in `[index - 365, index - 1]` | `03_prior_therapy.R` |
 | 7 | No other cancer in the baseline | one inpatient record, or two outpatient records in adjacent months in one ICD-10 group; confirmed; MM codes and plasma-cell labels do not count | `04_other_malig.R` |
 | 8 | No pregnancy | no confirmed pregnancy diagnosis or delivery act in the study period | `05_pregnancy.R` |

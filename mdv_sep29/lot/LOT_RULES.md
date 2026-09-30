@@ -735,13 +735,24 @@ about AUTO.
 
 ### 6.1 AUTO codes within 13 days are one transplant
 
-Worked example: `auto_window_within` / `auto_window_beyond`.
+Worked example: `auto_window_within` / `auto_window_beyond`; at the tandem
+mark, `auto_seam_straddle` / `auto_seam_after` / `auto_seam_far`.
 
 Claims 0 to `sct_auto_window_days` days after a window's first claim are one
 transplant (`<=`, so a 14-day window counting its first day), and the **last**
 date in the window is taken — the earlier claims are workup, the last is the
-infusion. Where a window straddles the tandem boundary the date closest to that
-boundary is taken instead, so the tandem test (§6.3) lands correctly.
+infusion.
+
+**Near the tandem mark the closest claim is taken instead.** The mark is the
+previous transplant plus `sct_tandem_days`, the last day that still counts as a
+tandem. Where any claim in the window is within `sct_auto_window_days` of the
+mark, on either side of it, the window is dated at its claim closest to the
+mark, so the tandem test (§6.3) lands on the side the episode reaches. That
+holds for a window wholly past the mark as well as one across it: the rule's
+worked example is a first AUTO on 09MAY2018, a mark on 05NOV2018, and claims
+07NOV–20NOV dated 07NOV, not 20NOV. Past the mark the pair is excess either
+way; the rule moves the date the line ends, not whether it ends. A window with
+no claim that close is dated at its last claim.
 
 ### 6.2 AUTO events under 60 days apart merge
 

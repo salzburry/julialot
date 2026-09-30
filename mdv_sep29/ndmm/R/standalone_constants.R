@@ -68,15 +68,16 @@ NDMM_MIN_AGE <- as.integer(Sys.getenv("MIN_AGE", unset = "18"))
 # abbreviation this does not name.
 NDMM_BELANTAMAB_ABBR <- Sys.getenv("NDMM_BELANTAMAB_ABBR", unset = "BELA")
 
-# Agents barred from setting the 1L index date, beyond belantamab. Empty by
-# default: only belantamab is named as a later-line therapy, and adding a name
-# here shrinks the cohort by a rule nobody has written down.
+# Agents barred from setting the 1L index date, beyond belantamab. Protocol
+# I3 names panobinostat and elotuzumab as later-line agents, so the contract
+# pins PANO|ELOT: a different value is a different cohort and needs
+# NDMM_CONTRACT_OVERRIDE. Each entry must match the production code list's
+# CL_MED_ABBR, or build_ndmm_index_ineligible_codes() stops the run.
 #
 # NDMM_INDEX_AGENTS is written on every run for this decision - every agent
-# that actually set an index date, and for how many patients. Read it after the
-# first run and name any later-line-only agent here. Comma-separated, matched
-# against CL_MED_ABBR as LIKE patterns, so a prefix works.
-NDMM_INDEX_EXCLUDED_ABBRS <- Sys.getenv("NDMM_INDEX_EXCLUDED_ABBRS", unset = "")
+# that actually set an index date, and for how many patients. Separated by |,
+# matched against CL_MED_ABBR as LIKE patterns, so a prefix works.
+NDMM_INDEX_EXCLUDED_ABBRS <- Sys.getenv("NDMM_INDEX_EXCLUDED_ABBRS", unset = "PANO|ELOT")
 
 # The same, by receipt code instead of abbreviation, for when someone has the
 # code and not the code list's naming. Separated by |, either

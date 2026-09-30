@@ -385,7 +385,8 @@ build_ndmm_fu_ce_counts <- function(con, cfg) {
              -- Floored at the index. The index scan does not bound on death,
              -- so a 1L start CAN fall after a recorded death; unfloored,
              -- want_end would land before the window starts and a patient last
-             -- seen before the index would pass.
+             -- seen before the index would pass. Such a patient fails
+             -- criterion 5 at every window (alive_at_index below).
              greatest(
                least(CASE WHEN w.months IS NULL
                           THEN date_add(idx.LOT1_START_DT, w.sort_key)
@@ -393,13 +394,16 @@ build_ndmm_fu_ce_counts <- function(con, cfg) {
                      date('{cfg$study_end}'),
                      coalesce(idx.DEATH_DT, date('{cfg$study_end}'))),
                idx.LOT1_START_DT)                        AS want_end,
-             idx.LOT1_START_DT
+             idx.LOT1_START_DT,
+             CASE WHEN idx.DEATH_DT IS NULL OR idx.DEATH_DT >= idx.LOT1_START_DT
+                  THEN 1 ELSE 0 END                      AS alive_at_index
       FROM idx CROSS JOIN w
     ),
     cov AS (
       SELECT want.PATID, want.sort_key, want.rule,
              max(CASE WHEN o.OBS_START_DT <= want.LOT1_START_DT
                        AND o.OBS_END_DT   >= want.want_end
+                       AND want.alive_at_index = 1
                       THEN 1 ELSE 0 END) AS CE_fu
       FROM want
       LEFT JOIN {NDMM_OBS_PERIOD} o ON o.PATID = want.PATID
@@ -482,6 +486,72 @@ build_ndmm_belantamab_reconcile <- function(con, cfg) {
           "patient's follow-up, so lot's no_belantamab removes these patients: ",
           "expect the LOT population smaller by ", format(got$n_pat, big.mark = ","),
           ".")
+  invisible(got)
+}
+
+# Every MDV act after a recorded death, for review (DECISIONS M12). The death
+# date is the FF1 discharge date as recorded, and it is never moved: an act
+# after it is a contradiction in the data - a hospital recording against the
+# wrong patient, a death code on the wrong discharge, or two hospitals'
+# records joined under one key - and nothing here can say which. So each
+# conflict is listed, not resolved.
+#
+# What the build does with one: a 1L start after the death fails criterion 5
+# (06_flags.R), so that patient is not in the cohort (DEATH_BEFORE_INDEX = 1).
+# A death after the 1L start keeps the patient, and a LOT run over the cohort
+# stops observing at the death, so the later acts reach no line.
+build_ndmm_death_conflicts <- function(con, cfg) {
+  db_exec(con, glue("
+    CREATE OR REPLACE TABLE {wrk('NDMM_DEATH_CONFLICTS')} AS
+    WITH dead AS (
+      SELECT cast(PATID as string) AS PATID, DEATH_DT
+      FROM {NDMM_BASE_COHORT}
+      WHERE DEATH_DT IS NOT NULL
+    ),
+    acts AS ({mdv_act_select()}
+    ),
+    after AS (
+      SELECT d.PATID, count(*) AS n_acts, min(a.ACT_DT) AS first_dt,
+             max(a.ACT_DT) AS last_dt
+      FROM dead d
+      INNER JOIN acts a ON cast(a.PATID as string) = d.PATID AND a.ACT_DT > d.DEATH_DT
+      GROUP BY d.PATID
+    ),
+    tx AS (
+      SELECT d.PATID, count(*) AS n_tx
+      FROM dead d
+      INNER JOIN {NDMM_MM_TX} t ON cast(t.PATID as string) = d.PATID AND t.tx_dt > d.DEATH_DT
+      GROUP BY d.PATID
+    )
+    SELECT d.PATID,
+           d.DEATH_DT,
+           l1.LOT1_START_DT,
+           CASE WHEN l1.LOT1_START_DT > d.DEATH_DT THEN 1 ELSE 0 END AS DEATH_BEFORE_INDEX,
+           af.n_acts                                AS N_ACTS_AFTER_DEATH,
+           coalesce(tx.n_tx, 0)                     AS N_MM_TX_AFTER_DEATH,
+           af.first_dt                              AS FIRST_ACT_AFTER_DEATH,
+           af.last_dt                               AS LAST_ACT_AFTER_DEATH,
+           {sql_text(run_id)}                       AS RUN_ID
+    FROM dead d
+    INNER JOIN after af ON af.PATID = d.PATID
+    LEFT JOIN tx ON tx.PATID = d.PATID
+    LEFT JOIN (SELECT cast(PATID as string) AS PATID, min(LOT1_START_DT) AS LOT1_START_DT
+               FROM {NDMM_LOT1_STARTS} GROUP BY cast(PATID as string)) l1
+           ON l1.PATID = d.PATID
+    ORDER BY d.PATID"))
+  got <- db_q(con, glue("
+    SELECT count(*) AS n_pat, coalesce(sum(DEATH_BEFORE_INDEX), 0) AS n_before
+    FROM {wrk('NDMM_DEATH_CONFLICTS')}"))
+  if (isTRUE(got$n_pat > 0)) {
+    log_msg("WARNING: ", format(got$n_pat, big.mark = ","), " patient(s) have MDV ",
+            "acts after their recorded death; ", format(got$n_before, big.mark = ","),
+            " of them started 1L after it and fail criterion 5. The death dates ",
+            "are kept as recorded -> ", wrk("NDMM_DEATH_CONFLICTS"))
+    options(ndmm_findings = union(getOption("ndmm_findings", character(0)),
+                                  "death_conflicts"))
+  } else {
+    log_msg("No MDV act after a recorded death.")
+  }
   invisible(got)
 }
 
