@@ -22,7 +22,7 @@ MDV form, gives where each MDV choice came from, and lists what is still open.
 | `ndmm/` | the 1L NDMM cohort on MDV. Writes `<prefix>NDMM_COHORT`, the table the LOT engine reads. `ndmm/README.md` |
 | `lot/` | the LOT engine on MDV (`lot/engine/`): the Optum line rules, with the MDV extraction; and the rule vignettes (`lot/validation/`). `lot/README.md`, `lot/CONTENTS.md` |
 | `codelists/` | the MDV code lists' shapes (headers only) and how to author them. The lists themselves live on production, like the Optum ones |
-| `reference/` | the colleague's MDV ovarian cancer business rules, transcribed; the search of this account's other repositories for MDV documentation |
+| `reference/` | the colleague's MDV ovarian cancer business rules, transcribed; two searches of this account's other repositories, for MDV documentation and for dataset structure (myeloma from EHR data, lab tables) |
 | `tests/` | the DuckDB stand-in warehouse (`duck_bridge.py`), the synthetic MDV patients (`fixture_mdv.R`) the suites run against, and `run_all.R`, which runs every suite |
 
 Rules, not code, are the port's substance. The machinery around them is the
@@ -48,6 +48,11 @@ log. Someone who knows the Optum build can read this one.
    by type.
 3. **Read the open decisions** (`MDV_RULES.md`, section 5). Each has a default,
    and the first run writes the tables that price them.
+4. **Decide what the MDV definition is for** (`MDV_RULES.md`, section 5a):
+   comparability with the Optum cohort, validity in Japan, or both. Finding
+   the right patients works differently in Japan, and MDV holds clinical
+   detail - laboratory results, work-up orders, inpatient doses - that Optum
+   claims do not. None of that is used yet.
 
 ## Running it
 

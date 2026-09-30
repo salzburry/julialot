@@ -283,6 +283,89 @@ account can reach (`reference/README.md`).
 
 ---
 
+## 5a. Beyond a translation: Japan, and what MDV holds that Optum does not
+
+This build translates the Optum rules faithfully, so an MDV cohort can sit
+beside the Optum one. Two things argue against stopping there. **Finding the
+right patients works differently in Japan**, so a rule that is sound on US
+claims can admit the wrong patients here or miss the right ones. And **MDV
+carries clinical detail that Optum claims do not**, which could confirm a
+diagnosis, or date a progression, where claims can only infer one.
+
+That makes a choice the study team has to take, and it is not a coding one:
+**comparability** (the Optum rules, knowingly imperfect in Japan), **validity
+in Japan** (rules rewritten for Japanese practice and MDV's data), or both - the
+translation as the primary definition and a Japan-adapted one priced beside it,
+the way `NDMM_MM_DX_RULES` prices the readings of criterion 1 now. None of what
+follows is built.
+
+### Identifying the right patients
+
+| the Optum rule assumes | in Japan, on MDV | what could be done |
+|---|---|---|
+| A confirmed diagnosis code means the disease | Japanese claims carry **reimbursement diagnoses** (保険病名): a disease name recorded so a test or a drug is paid for, not only a suspected one. `utagaiflg` catches the suspected; a myeloma name recorded to justify a myeloma drug or test is confirmed and still wrong. | Ask for more than the code: the treatment link the OC rules use (priced now, not applied), a diagnostic work-up around the diagnosis (below), or laboratory evidence. |
+| The lookback sees earlier treatment | The payer follows a US member from provider to provider. MDV sees one hospital, under that hospital's patient key. Patients are commonly referred to a hospital's haematology department from clinics and other hospitals, and treatment given before the referral is invisible. Criterion 4 proves only that **this hospital** saw them a year before. | Measure how many are first seen shortly before the index; require the MM diagnosis to be first recorded at this hospital close to the 1L start; use DPC Form 1's first-occurrence flag (`cancerfirstflg`, which the OC inpatient rule reads); laboratory evidence at diagnosis. |
+| The regimen universe and its dates | Approval dates and first-line practice differ between the US and Japan, and so do brand, generic and biosimilar names. | A clinician's review of the drug list, the barred agents and `LOT1_FROM` against Japanese approvals (PORTING says so too); read `NDMM_INDEX_AGENTS` and `unresolved_names` after the first run. |
+| US plausibility bands | The LOT face-validity bands (transplant rate, line lengths) are US-derived; myeloma is rarer in Japan and the transplant rate and regimens differ. | Japanese benchmarks for the bands and for the line distribution (PORTING's last section). |
+| Death is observed | Only in-hospital deaths at a contributing hospital (section 5, item 6). | Already handled as censoring at the last record; state it wherever survival is read. |
+
+### What MDV holds that Optum does not
+
+MDV is built from hospital systems, not only from bills. Which of these a
+given delivery carries has to come from MDV's data dictionary. The OC rules
+name none of them, and no repository this account can reach documents them.
+The account's other repositories do show how the house defines myeloma from
+EHR data and handles lab tables. `reference/DATASET_STRUCTURE_OTHER_REPOS.md`
+sets that beside MDV.
+
+- **Laboratory results**, where the delivery includes them (MDV holds them for
+  part of its hospitals): M-protein, serum free light chains, calcium,
+  creatinine, haemoglobin, beta-2 microglobulin, albumin, LDH. They could
+  confirm a myeloma diagnosis against reimbursement diagnoses; separate active
+  myeloma from smouldering myeloma and MGUS (CRAB and SLiM features), which
+  the plasma-cell overrides now do by label; give an ISS or R-ISS stage at the
+  index, which Optum cannot; and date progression from M-protein, so a line
+  could end at an IMWG-style progression rather than at a gap in treatment.
+- **Laboratory orders** as billed acts. Even without results, a protein
+  electrophoresis, immunofixation, free light chain test or bone-marrow
+  examination is a procedure with a receipt code, and a work-up around the
+  diagnosis is evidence of a diagnosis made rather than a name recorded. This
+  needs only `actdata` and a code list, provided `actdata` carries procedures
+  (section 5, "confirm").
+- **Inpatient care by the day.** DPC records inpatient drugs and procedures
+  day by day, and where `actdata` carries a quantity, a dose: high-dose
+  melphalan conditioning could confirm an autologous transplant, and dose per
+  body-surface area needs only DPC Form 1's height and weight.
+- **DPC Form 1 clinical fields**: height, weight, ADL, the first-occurrence
+  flag. Its cancer staging covers a few major solid cancers, not myeloma.
+
+**What each needs.**
+
+- **The laboratory uses** need, from the dictionary: the lab table's name, its
+  test coding (Japan's JLAC10, most likely), its units, a sample date and a
+  result date, and which hospitals report results. Then one scan of every
+  test, name and unit over the cohort, before any code list is written
+  (`reference/DATASET_STRUCTURE_OTHER_REPOS.md`, sections 2 and 3, gives the
+  query and the traps). The traps are serum against urine, a concentration
+  against a percentage, and Japanese test names that no English pattern
+  matches.
+- **ISS** needs two results, beta-2 microglobulin and albumin, and looks
+  feasible. **R-ISS** also needs FISH, a report rather than a value, and does
+  not.
+- **The work-up and dose uses** need `actdata`'s procedure and quantity columns
+  confirmed, and a code list.
+
+The cheapest first step is the work-up. Priced as another reading in
+`NDMM_MM_DX_RULES`, it changes nothing in the cohort and shows how many myeloma
+diagnoses have no work-up behind them.
+
+**A lab-based definition changes what the comparison measures.** The Optum
+build reads Clinformatics, which is claims only. Optum Market Clarity, which
+links claims to EHR data, has lab results. Set a lab-confirmed MDV cohort
+beside a Clinformatics one and the definition and the country differ at once.
+A lab-based definition compared across the two countries would need Market
+Clarity on the US side.
+
 ## 6. What the OC rules gave, and what was left
 
 | OC rule | here |

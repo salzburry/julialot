@@ -3,6 +3,7 @@
 | file | what it is |
 |---|---|
 | `MDV_Ovarian_Cancer_Business_Rules.md` | A colleague's MDV ovarian cancer business rules, transcribed from photographs of screens 1–4 of 5 on 29 September 2026. Screen 5 was not photographed. The source document is labelled Proprietary / CSI Internal Only; keep this inside the organisation. It is where this port takes MDV's table names, column names and value codes from. `../MDV_RULES.md`, section 6, says what was taken from it and what was not |
+| `DATASET_STRUCTURE_OTHER_REPOS.md` | A second search of the same repositories, on 30 September 2026, for dataset structure rather than MDV by name. It covers how the house defines myeloma from EHR data, what a lab table has to give, and how the house profiles a lab vocabulary before writing a code list. It found nothing on MDV or any Japanese source. `../MDV_RULES.md`, section 5a, uses it |
 
 ## The search for other MDV documentation
 
